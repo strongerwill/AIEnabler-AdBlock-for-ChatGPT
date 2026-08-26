@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AIEnabler - AdBlock for ChatGPT</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        width: 320px;
+        padding: 14px 16px 16px;
+      }
+      h1 {
+        font-size: 15px;
+        font-weight: 650;
+        margin: 0;
+      }
+      .subtitle {
+        margin: 2px 0 12px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        opacity: 0.6;
+      }
+      p {
+        margin: 0 0 12px;
+        font-size: 12px;
+        line-height: 1.4;
+        opacity: 0.8;
+      }
+      label.toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #status,
+      #stats {
+        margin-top: 8px;
+        font-size: 12px;
+      }
+      #stats {
+        opacity: 0.8;
+      }
+      label.network {
+        margin-top: 14px;
+      }
+      .hint {
+        margin: 6px 0 0;
+        font-size: 11px;
+        opacity: 0.65;
+      }
+      hr {
+        border: none;
+        border-top: 1px solid rgba(128, 128, 128, 0.35);
+        margin: 14px 0 10px;
+      }
+      button {
+        font: inherit;
+        font-size: 12px;
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(128, 128, 128, 0.5);
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 8px;
+        height: 120px;
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        resize: vertical;
+      }
+      textarea[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>AIEnabler</h1>
+    <p class="subtitle">AdBlock for ChatGPT</p>
+    <p>Hides sponsored cards around ChatGPT answers. Answer text is never touched.</p>
+
+    <label class="toggle">
+      <input type="checkbox" id="toggle" />
+      Hide sponsored ads
+    </label>
+    <div id="status"></div>
+    <div id="stats"></div>
+
+    <label class="toggle network">
+      <input type="checkbox" id="network" />
+      Block ad scripts (recommended)
+    </label>
+    <p class="hint">
+      Stops ChatGPT from downloading its ad modules at all, so no ad can render.
+      ChatGPT may reload the tab once after a blocked module. Reload the tab
+      after changing this.
+    </p>
+
+    <hr />
+
+    <p>
+      Still seeing an ad? Keep the ChatGPT tab open, run a scan, then copy the
+      report so the selectors can be tuned.
+    </p>
+    <div class="row">
+      <button id="scan" type="button">Scan open ChatGPT tab</button>
+      <button id="copy" type="button" hidden>Copy report</button>
+    </div>
+    <textarea id="report" hidden readonly spellcheck="false"></textarea>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

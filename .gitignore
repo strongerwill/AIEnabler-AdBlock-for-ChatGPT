@@ -1,0 +1,17 @@
+# Secrets and local env
+.env
+.env.*
+*.pem
+credentials.json
+
+# Packaged extension artifacts
+*.crx
+*.zip
+
+# Dependencies / editor
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

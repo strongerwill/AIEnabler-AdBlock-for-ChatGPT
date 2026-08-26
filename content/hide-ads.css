@@ -1,0 +1,101 @@
+/* Instant hide for known ChatGPT ad markers, before any script runs.
+ *
+ * Rules are gated on html:not(.gpt-ad-filter-off), not on a class the content
+ * script has to add: ads must stay hidden even if hide-ads.js fails to load or
+ * throws, and the popup only ever needs to add one class to bring them back.
+ *
+ * Selector groups are kept small on purpose. A single unsupported selector
+ * invalidates the whole rule it sits in, so the group below that matters most -
+ * the class the script marks nodes with - stands alone.
+ *
+ * Never use a bare "ad" substring here: words like "head" would match.
+ */
+
+html:not(.gpt-ad-filter-off) .gpt-ad-filter-hidden,
+html:not(.gpt-ad-filter-off) [data-gpt-ad-filter] {
+  display: none !important;
+}
+
+/* The accessible name is the one hook that survives ChatGPT's hashed classes.
+   Matched as a substring: the served unit is <aside aria-label=" Sponsored ">,
+   padding included, and its menu button reads "Sponsored options". */
+html:not(.gpt-ad-filter-off) [aria-label*="sponsor" i],
+html:not(.gpt-ad-filter-off) [aria-roledescription*="sponsor" i],
+html:not(.gpt-ad-filter-off) [aria-label*="promoted" i],
+html:not(.gpt-ad-filter-off) [aria-label*="advertisement" i],
+html:not(.gpt-ad-filter-off) [aria-label*="ad options" i],
+html:not(.gpt-ad-filter-off) [aria-label*="ad settings" i],
+html:not(.gpt-ad-filter-off) [aria-label*="this ad" i] {
+  display: none !important;
+}
+
+/* Ad containers named outright by an attribute. */
+html:not(.gpt-ad-filter-off) [data-sponsor],
+html:not(.gpt-ad-filter-off) [data-sponsored],
+html:not(.gpt-ad-filter-off) [data-sponsor-v2],
+html:not(.gpt-ad-filter-off) [data-ad-card],
+html:not(.gpt-ad-filter-off) [data-ad-slot],
+html:not(.gpt-ad-filter-off) [data-ad-unit],
+html:not(.gpt-ad-filter-off) [data-ad-placement],
+html:not(.gpt-ad-filter-off) [data-ads],
+html:not(.gpt-ad-filter-off) [data-ad],
+html:not(.gpt-ad-filter-off) [data-assistant-ads],
+html:not(.gpt-ad-filter-off) [data-assistant-ad],
+html:not(.gpt-ad-filter-off) [data-ads-placement],
+html:not(.gpt-ad-filter-off) [data-advertisement],
+html:not(.gpt-ad-filter-off) [data-promoted],
+html:not(.gpt-ad-filter-off) [data-koah-ad] {
+  display: none !important;
+}
+
+/* Ad markers in class, id and test-id values. */
+html:not(.gpt-ad-filter-off) [class*="sponsor" i],
+html:not(.gpt-ad-filter-off) [class*="promoted" i],
+html:not(.gpt-ad-filter-off) [class*="advert" i],
+html:not(.gpt-ad-filter-off) [class*="-ads-" i],
+html:not(.gpt-ad-filter-off) [class*="adcard" i],
+html:not(.gpt-ad-filter-off) [class*="adunit" i],
+html:not(.gpt-ad-filter-off) [class*="adslot" i],
+html:not(.gpt-ad-filter-off) [id*="sponsor" i],
+html:not(.gpt-ad-filter-off) [id*="promoted" i],
+html:not(.gpt-ad-filter-off) [data-testid^="ad-" i],
+html:not(.gpt-ad-filter-off) [data-testid$="-ad" i],
+html:not(.gpt-ad-filter-off) [data-testid*="-ad-" i],
+html:not(.gpt-ad-filter-off) [data-testid*="sponsor" i],
+html:not(.gpt-ad-filter-off) [data-testid*="promoted" i] {
+  display: none !important;
+}
+
+/* Hiding the unit leaves its wrapper behind, and an empty flex child still
+   contributes the thread's row gap. `li` is excluded on purpose: a conversation
+   turn is an <li>, and hiding one would take the answer with it. */
+html:not(.gpt-ad-filter-off)
+  :is(div, section, article):has(> aside[aria-label*="sponsor" i]),
+html:not(.gpt-ad-filter-off)
+  :is(div, section, article):has(> [aria-roledescription*="sponsor" i]),
+html:not(.gpt-ad-filter-off)
+  :is(div, section, article):has(> :is(button, a)[aria-label*="ad options" i]),
+html:not(.gpt-ad-filter-off)
+  :is(div, section, article):has(> :is(button, a)[aria-label*="this ad" i]) {
+  display: none !important;
+}
+
+/* Ad creatives come from their own host, which conversation images never use. */
+html:not(.gpt-ad-filter-off) img[src*="bzrcdn.openai.com" i] {
+  display: none !important;
+}
+
+/* Ad server click-through links: the campaign medium and the referral tokens
+   the ad renderer appends. Their card is hidden by hide-ads.js; this only stops
+   the link itself from flashing first. Excluded inside a rendered answer, where
+   such a URL is the model quoting one rather than an ad being served. */
+html:not(.gpt-ad-filter-off)
+  a:is(
+    [href*="utm_medium=paidaeo" i],
+    [href*="oppref=" i],
+    [href*="olref=" i]
+  ):not(
+    :is(.markdown, .prose, [data-assistant-markdown], [data-message-content]) *
+  ) {
+  display: none !important;
+}
