@@ -4,6 +4,13 @@ const KEY_DIAG_RESULT = "diagnosticsResult";
 const KEY_STATS = "lastStats";
 const KEY_BLOCK_NETWORK = "blockNetwork";
 
+/**
+ * Ad creative host. Requested only when network blocking is switched on, so a
+ * default install keeps host access limited to ChatGPT - and so the switch
+ * cannot end up on while the rule is inert for lack of access.
+ */
+const CREATIVE_ORIGIN = "https://bzrcdn.openai.com/*";
+
 const toggle = document.getElementById("toggle");
 const network = document.getElementById("network");
 const status = document.getElementById("status");
@@ -47,7 +54,19 @@ chrome.storage.local.get(
   (result) => {
     const on = result[KEY_ENABLED] !== false;
     toggle.checked = on;
-    network.checked = result[KEY_BLOCK_NETWORK] !== false;
+    // Opt-in: anything other than an explicit true reads as off, so a fresh
+    // profile - and one upgrading from the version that defaulted this on -
+    // starts with ChatGPT untouched by network blocking.
+    const blocking = result[KEY_BLOCK_NETWORK] === true;
+    network.checked = blocking;
+    if (blocking) {
+      // Chrome closes the popup while the permission prompt is up, so a denied
+      // request may never reach its callback. The grant is the source of truth.
+      chrome.permissions.contains({ origins: [CREATIVE_ORIGIN] }, (granted) => {
+        network.checked = Boolean(granted);
+        if (!granted) chrome.storage.local.set({ [KEY_BLOCK_NETWORK]: false });
+      });
+    }
     setStatus(on);
     renderStats(result[KEY_STATS]);
   },
@@ -59,7 +78,24 @@ toggle.addEventListener("change", () => {
 });
 
 network.addEventListener("change", () => {
-  chrome.storage.local.set({ [KEY_BLOCK_NETWORK]: network.checked });
+  if (!network.checked) {
+    chrome.storage.local.set({ [KEY_BLOCK_NETWORK]: false });
+    chrome.permissions.remove({ origins: [CREATIVE_ORIGIN] }, () => {});
+    return;
+  }
+  // Stored first, because the permission prompt closes the popup and the
+  // callback below may never run. Without the grant the rule simply never
+  // matches, and the next popup open reconciles the switch.
+  chrome.storage.local.set({ [KEY_BLOCK_NETWORK]: true });
+  // Called straight from the change event: the request needs the user gesture.
+  chrome.permissions.request({ origins: [CREATIVE_ORIGIN] }, (granted) => {
+    network.checked = Boolean(granted);
+    if (!granted) {
+      chrome.storage.local.set({ [KEY_BLOCK_NETWORK]: false });
+      status.textContent =
+        "Ad-host access was not granted, so request blocking stays off.";
+    }
+  });
 });
 
 scanButton.addEventListener("click", () => {

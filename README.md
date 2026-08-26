@@ -11,22 +11,31 @@ Scope is deliberately narrow: ad chrome only. Plus/Go upsells, login banners, co
 3. Click **Load unpacked** and select this folder (`gpt-plugin`).
 4. Open [chatgpt.com](https://chatgpt.com), ask something that normally shows an ad, and confirm the sponsored card is gone while the answer stays.
 
-The toolbar popup toggles hiding, toggles ad-script blocking, shows how many elements were hidden on the last ChatGPT page, and can capture a diagnostics report. Everything is local; nothing is sent anywhere.
+The toolbar popup toggles hiding, offers an experimental request-blocking switch (**off by default**), shows how many elements were hidden on the last ChatGPT page, and can capture a diagnostics report. Everything is local; nothing is sent anywhere.
 
 ## How it works
 
 Four independent layers, because ChatGPT ships hashed class names and renames its `data-*` attributes often:
 
-1. **Network blocking** ([`background.js`](background.js)) drops the lazy ad module chunks the client imports (`assistant-ads-*.js`, `ads-analytics-*.js`) and `/ads/` requests, so the ad never mounts. On by default; see the caveat under [Ad-script blocking](#ad-script-blocking).
+1. **Request blocking** ([`background.js`](background.js)) — **off by default, experimental.** When switched on it blocks ad *creatives* from the ad host (`bzrcdn.openai.com`) and nothing else. No request to `chatgpt.com` is blocked any more; see [Request blocking](#request-blocking) for why. The three layers below are what actually removes the ads, and they work with this switch off.
 2. **CSS** ([`content/hide-ads.css`](content/hide-ads.css)) hides known ad markers at `document_start`, before any script runs, so there is no flicker. Its main hook is the accessible name: the served unit is `<aside aria-label=" Sponsored ">` with a `Sponsored options` menu button, so labels are matched as substrings, padding and all. `:has()` then takes the wrapper that holds nothing but that aside, and the ad creative is caught by its host (`bzrcdn.openai.com`). Hiding is the *default* state — rules are gated on `html:not(.gpt-ad-filter-off)`, so they still apply if the content script fails to load, and the popup's off switch is what adds the class.
 3. **Attribute patterns** ([`content/hide-ads.js`](content/hide-ads.js)) match any element whose attribute *name* contains an ad token (`data-assistant-ads`, `data-ad-slot`, …) or whose `class`/`id`/`aria-label`/`data-testid` *value* contains one (`-ads-`, `sponsored`, `adCard`, `promoted`, …). This catches renamed attributes without a code change. Class hashes such as `_S47C4QYyCs` carry no tokens at all, which is why the layers below matter.
 4. **Anchors: labels, controls, links, creatives and payload** — a short standalone label (`Sponsored`, `Ad`, `广告`, `スポンサー`, `광고`, …), an ad control, a click-through link through the ad server (`oppref=`, `olref=`, `utm_medium=paidaeo`), an image from the creative host, or the analytics JSON the renderer embeds beside every ad (`adsRequestId`, `adDataToken`). Any one of them is enough: the ad's landmark wrapper is found by climbing from the anchor, so the card, its `About this ad` panel and its empty frame all go together. Marked nodes also get an inline `display: none`, so script-side hiding does not depend on the stylesheet either.
 
 Re-sweeping is resilient to the lightweight renderer, which swaps large DOM regions: a `MutationObserver` over child lists, attributes and text (including open shadow roots), the renderer's own events (`web-mobile-conversation-state-change`, `pageshow`, `popstate`, …), and a cheap 1.5s interval while the tab is visible. Elements already found clean are remembered and only re-checked when they mutate, so streaming a long answer stays cheap.
 
-### Ad-script blocking
+### Request blocking
 
-`declarativeNetRequest` rules block the ad chunks outright, which is the only layer that cannot be outrun by markup changes. The trade-off: ChatGPT's own module-recovery code reloads the tab when a dynamic import fails. Its session guard keys that on the build id, so it happens at most once per build per tab — but if you would rather never see a reload, turn **Block ad scripts** off in the popup and reload the tab. Cosmetic filtering keeps working either way.
+Off by default, and deliberately narrow. Up to 1.4.1 the `declarativeNetRequest` rules matched ChatGPT's own origin by URL path — `assistant-ads-*.js`, `ads-analytics-*`, and a `/(?:ads|advertisement|sponsored)/` regex across xhr/image/ping/script. Those paths are not exclusive to advertising: the lightweight (unauthenticated) renderer streams conversations from `/unauth-mweb/conversation`, loads partial-update chunks from the same origin, and calls `/backend-api/` and `/backend-anon/` — so a blocked request there could leave a chat stuck on **Unable to connect. Retry**.
+
+Since 1.5.0:
+
+- Nothing on `chatgpt.com` / `chat.openai.com` is blocked. A rule that does not name the exact hosts it applies to, or that names a ChatGPT host, is refused in code — `/backend-api/`, `/backend-anon/`, `/unauth-mweb/conversation`, the sentinel frame, the beacon endpoints and the script chunks are all unreachable by any rule.
+- The only rule left blocks images/media from the ad creative host, and it is opt-in. Turning the switch on asks for access to that host (an *optional* permission), so a default install still has host access to ChatGPT only.
+- Dynamic rules survive extension updates, so the worker clears **every** existing dynamic rule on install, on browser start, and on each worker start. Upgrading from 1.4.x removes the old rules automatically.
+- The switch defaults to off, and unreadable storage also reads as off.
+
+Ad hiding does not depend on any of this: the CSS and script layers are what the extension relies on.
 
 ### Safety guards
 
@@ -42,6 +51,18 @@ Deliberate exceptions:
 - Attribute names that only describe a capability (`data-ads-eligible`, `adsEnabled`, …) never match, because they mark containers that may host an ad rather than the ad.
 
 An answer that mentions ads is safe: anything inside rendered message text is ignored by the label, link and payload heuristics, and prose is a hard boundary when climbing to the card. So an answer containing the word "Sponsored", or quoting an ad URL, keeps both.
+
+## ChatGPT says "Unable to connect. Retry"
+
+That is a blocked or failed conversation request, not a hiding problem. If it happens with this extension installed:
+
+1. Open the popup and make sure **Block ad requests (experimental)** is **off**.
+2. Go to `chrome://extensions` and click **Reload** on AIEnabler. This restarts the service worker, which clears any leftover `declarativeNetRequest` rules — including ones written by 1.4.x, since dynamic rules persist across updates.
+3. Hard-refresh the ChatGPT tab (`Ctrl`/`Cmd` + `Shift` + `R`).
+
+A workaround that has the same effect, reported by a user on 1.4.1: switch the extension's site access (extension icon → **This can read and change site data**) to **When you click the extension**, then back to **On chatgpt.com**. Rules that require host access stop applying and the page reloads, so ChatGPT reconnects — and the ads stay hidden, because hiding is done by CSS and the content script.
+
+If the error persists with request blocking off and after a reload + hard refresh, it is not coming from this extension: check other ad blockers, then load ChatGPT with all extensions disabled to confirm.
 
 ## Still seeing an ad?
 
@@ -76,11 +97,11 @@ Mirror new attribute/class selectors in [`content/hide-ads.css`](content/hide-ad
 ## Known limits
 
 - Ads injected **inside** the streamed answer with no disclosure label are not hidden; matching answer prose would risk deleting real content.
-- With ad-script blocking on, ChatGPT may reload the tab once per build when it notices the blocked import.
+- Ad modules are no longer blocked at the network level, so an ad the cosmetic and script layers do not recognise can still render for a moment before the sweep catches it.
 
 ## Privacy
 
-No analytics, no remote code, no conversation upload. Host access is limited to ChatGPT, and `storage` holds only the two switches, the hidden counter, and the diagnostics report you explicitly request.
+No analytics, no remote code, no conversation upload. Host access is limited to ChatGPT — access to the ad creative host is optional and requested only if you switch request blocking on — and `storage` holds only the two switches, the hidden counter, and the diagnostics report you explicitly request.
 
 ## License
 

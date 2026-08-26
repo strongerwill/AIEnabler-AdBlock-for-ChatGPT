@@ -102,12 +102,13 @@
 
     <label class="toggle network">
       <input type="checkbox" id="network" />
-      Block ad scripts (recommended)
+      Block ad requests (experimental, off)
     </label>
     <p class="hint">
-      Stops ChatGPT from downloading its ad modules at all, so no ad can render.
-      ChatGPT may reload the tab once after a blocked module. Reload the tab
-      after changing this.
+      Off by default. Blocks ad creative downloads from ad hosts only — nothing
+      on chatgpt.com is blocked. Network blocking can still interfere with
+      ChatGPT: if a chat ever shows <strong>Unable to connect</strong>, turn this
+      back off and hard-refresh the tab. Ads stay hidden either way.
     </p>
 
     <hr />
