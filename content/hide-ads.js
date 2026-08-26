@@ -237,6 +237,15 @@ const CHROME_SELECTOR = [
   "[data-mobile-composer]",
   "[data-swipable-detail-body]",
   "[data-swipable-detail-footer]",
+  // Recovery and auth UI. An ad unit never contains these, and hiding one would
+  // leave the user with no way to retry a failed turn or dismiss ChatGPT's
+  // anonymous rate-limit prompt.
+  "#mobile-auth-dialog",
+  "#no-auth-soft-rate-limit-dialog",
+  "[data-conversation-recovery]",
+  "[data-conversation-recovery-retry]",
+  "[data-conversation-gate]",
+  "[data-safety-dialog]",
   // React "lightweight web" shell: layout wrappers that must never collapse.
   ".wm-app-appShell",
   ".wm-app-conversation",

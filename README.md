@@ -64,13 +64,27 @@ A workaround that has the same effect, reported by a user on 1.4.1: switch the e
 
 If the error persists with request blocking off and after a reload + hard refresh, it is not coming from this extension: check other ad blockers, then load ChatGPT with all extensions disabled to confirm.
 
+## ChatGPT says "temporarily experiencing issues" after a login prompt
+
+This one is ChatGPT's own limit on anonymous use, not a blocked request. Logged out, the page ships its own trigger:
+
+```json
+"noAuthSoftRateLimit": { "hasLoggedInBefore": false, "triggerMessageCount": 5 }
+```
+
+After that many messages ChatGPT opens its **Thanks for trying ChatGPT** sheet (`#no-auth-soft-rate-limit-dialog`). Choosing **Stay logged out** dismisses the sheet but not the limit, so the next turn comes back as `data-conversation-recovery-status="service-unavailable"` with a link to [status.openai.com](https://status.openai.com/). That is a server response, and it is a different state from the `failed` status behind "Unable to connect. Retry" above.
+
+Nothing in this extension can produce it: since 1.5.0 no request on `chatgpt.com` is blocked, and the content script only sets `display: none` — it never touches the network. To confirm, turn **Hide sponsored ads** off in the popup, hard-refresh, and reproduce; the limit will still be there. Log in, or start a new chat later.
+
+The auth sheet, the conversation gate and the **Retry** control are on the never-hide list, so a future ChatGPT rename cannot let the filter swallow the UI you need to recover.
+
 ## Still seeing an ad?
 
 The ad markup differs by account, locale, and A/B bucket, so capture the real element:
 
 1. Leave the ChatGPT tab open with the ad visible.
 2. Open the extension popup and click **Scan open ChatGPT tab**.
-3. Click **Copy report** and paste it back into the chat/issue.
+3. Click **Copy report**, then email it to [davidadblocker@gmail.com](mailto:davidadblocker@gmail.com?subject=AIEnabler%20Feedback) with the subject **AIEnabler Feedback**.
 
 The report contains the candidate elements' tags/attributes/HTML snippets, every ad-ish attribute name found in the page, which `assistant-ads-*` chunks the page loaded, and the build id — enough to add an exact selector.
 
