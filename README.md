@@ -1,8 +1,16 @@
-# AIEnabler - AdBlock for ChatGPT
+# AIEnabler: Block Ads & Export Chats
 
-Chrome extension (Manifest V3) that hides sponsored ad cards around ChatGPT answers on `chatgpt.com` and `chat.openai.com`. It never rewrites or removes the model's answer.
+Chrome extension (Manifest V3) that keeps ChatGPT answers usable: it hides
+sponsored cards around replies, and it copies or exports the conversation
+locally (Markdown, images, tables, code blocks, print/PDF). It never rewrites
+or removes the model's answer, and nothing is uploaded.
 
-Scope is deliberately narrow: ad chrome only. Plus/Go upsells, login banners, cookie notices, and unlabeled recommendations are left alone.
+Ad hiding is still scoped to sponsored chrome only. Plus/Go upsells, login
+banners, cookie notices, and unlabeled recommendations are left alone.
+
+ChatGPT is the first site. Gemini, Claude, DeepSeek and similar chats are
+planned later; each site needs its own DOM adapters, so they are not claimed
+as supported until they actually work.
 
 ## Load unpacked
 
@@ -11,7 +19,35 @@ Scope is deliberately narrow: ad chrome only. Plus/Go upsells, login banners, co
 3. Click **Load unpacked** and select this folder (`gpt-plugin`).
 4. Open [chatgpt.com](https://chatgpt.com), ask something that normally shows an ad, and confirm the sponsored card is gone while the answer stays.
 
-The toolbar popup toggles hiding, offers an experimental request-blocking switch (**off by default**), shows how many elements were hidden on the last ChatGPT page, and can capture a diagnostics report. Everything is local; nothing is sent anywhere.
+The toolbar popup toggles ad hiding, offers an experimental request-blocking
+switch (**off by default**), runs local exports, shows how many elements were
+hidden on the last ChatGPT page, and can capture a diagnostics report.
+
+## Local export tools
+
+Reload an open ChatGPT tab after installing or updating the extension. Export
+controls then appear when you hover over an assistant answer or a table:
+
+- **Copy Markdown** copies one assistant answer.
+- **Copy table MD** and **Copy CSV** copy a table in a reusable format. A CSV
+  copy also carries a table flavor, so spreadsheets paste real cells.
+- **Copy keeping layout** and **Copy MD** appear below a multi-line code block.
+  Code blocks often hold ASCII diagrams rather than code, and a plain-text paste
+  into Word, an email or a chat app re-flows them in a proportional font, which
+  breaks the alignment. **Copy keeping layout** therefore also puts a monospace
+  version on the clipboard, so rich-text targets keep the drawing intact while
+  editors and terminals still receive the exact text. Single-line blocks get no
+  toolbar, since one line cannot lose its alignment.
+- The extension popup can copy the latest answer, download the full conversation
+  as a ZIP (`conversation.md` plus an `images/` folder), or open a clean print
+  view. Choose **Save as PDF** in the browser print dialog.
+- `Ctrl+Shift+M` copies the latest answer and `Ctrl+Shift+E` exports the
+  conversation. Shortcuts can be changed at `chrome://extensions/shortcuts`.
+
+Image downloads stay local. The first image export asks for optional access to
+OpenAI's image-delivery hosts, then starts the pending export after access is
+granted. If another image host cannot be read, export keeps its original URL in
+Markdown and adds an image-download note instead of failing the whole export.
 
 ## How it works
 
@@ -115,7 +151,14 @@ Mirror new attribute/class selectors in [`content/hide-ads.css`](content/hide-ad
 
 ## Privacy
 
-No analytics, no remote code, no conversation upload. Host access is limited to ChatGPT — access to the ad creative host is optional and requested only if you switch request blocking on — and `storage` holds only the two switches, the hidden counter, and the diagnostics report you explicitly request.
+No analytics, no remote code, no conversation upload. Export conversion and ZIP
+creation happen in the current tab; generated files are downloaded directly to
+your device. Required host access is limited to ChatGPT. Access to the ad
+creative host is requested only if you switch request blocking on; access to
+OpenAI image-delivery hosts is requested only when you export images. `storage`
+holds the two switches, the hidden counter, the diagnostics report you
+explicitly request, and a short-lived marker while an image-export permission
+prompt is open.
 
 ## License
 

@@ -1,0 +1,53 @@
+.aienabler-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.aienabler-export-host:hover > .aienabler-tools,
+.aienabler-tools:focus-within {
+  opacity: 1;
+}
+
+.aienabler-tools button {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  padding: 4px 7px;
+}
+
+.aienabler-tools button:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.aienabler-tools button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.aienabler-table-tools,
+.aienabler-code-tools {
+  margin: 4px 0;
+  opacity: 0.72;
+}
+
+@media (hover: none) {
+  .aienabler-tools {
+    opacity: 0.82;
+  }
+}
+
+@media print {
+  .aienabler-tools {
+    display: none !important;
+  }
+}

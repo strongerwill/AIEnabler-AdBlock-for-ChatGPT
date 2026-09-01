@@ -3,6 +3,7 @@ const KEY_DIAG_REQUEST = "diagnosticsRequest";
 const KEY_DIAG_RESULT = "diagnosticsResult";
 const KEY_STATS = "lastStats";
 const KEY_BLOCK_NETWORK = "blockNetwork";
+const KEY_PENDING_EXPORT = "pendingMarkdownExport";
 
 /**
  * Ad creative host. Requested only when network blocking is switched on, so a
@@ -10,6 +11,12 @@ const KEY_BLOCK_NETWORK = "blockNetwork";
  * cannot end up on while the rule is inert for lack of access.
  */
 const CREATIVE_ORIGIN = "https://bzrcdn.openai.com/*";
+const EXPORT_IMAGE_ORIGINS = [
+  "https://*.oaiusercontent.com/*",
+  "https://*.oaistatic.com/*",
+  "https://images.openai.com/*",
+  "https://oaidalleapiprodscus.blob.core.windows.net/*",
+];
 
 const toggle = document.getElementById("toggle");
 const network = document.getElementById("network");
@@ -18,6 +25,10 @@ const stats = document.getElementById("stats");
 const scanButton = document.getElementById("scan");
 const copyButton = document.getElementById("copy");
 const report = document.getElementById("report");
+const copyMarkdownButton = document.getElementById("copy-markdown");
+const exportMarkdownButton = document.getElementById("export-markdown");
+const printConversationButton = document.getElementById("print-conversation");
+const exportStatus = document.getElementById("export-status");
 
 let scanStartedAt = 0;
 let scanTimer = 0;
@@ -121,6 +132,103 @@ copyButton.addEventListener("click", async () => {
   window.setTimeout(() => {
     copyButton.textContent = "Copy report";
   }, 1200);
+});
+
+function runExportAction(button, action, pendingText, doneText) {
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = pendingText;
+  exportStatus.textContent = "";
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (chrome.runtime.lastError || !tab?.id) {
+      button.disabled = false;
+      button.textContent = originalText;
+      exportStatus.textContent = "Open a ChatGPT conversation and try again.";
+      return;
+    }
+    chrome.tabs.sendMessage(
+      tab.id,
+      { type: "aienabler-export", action },
+      (response) => {
+        button.disabled = false;
+        button.textContent = originalText;
+        if (chrome.runtime.lastError || !response) {
+          exportStatus.textContent =
+            "Reload the open ChatGPT tab, then try again.";
+          return;
+        }
+        if (!response.ok) {
+          exportStatus.textContent =
+            response.error || "The export could not be completed.";
+          return;
+        }
+        Promise.resolve(doneText(response.result || {}))
+          .then((message) => {
+            exportStatus.textContent = message;
+          })
+          .catch((error) => {
+            exportStatus.textContent =
+              error.message || "The action could not be completed.";
+          });
+      },
+    );
+  });
+}
+
+copyMarkdownButton.addEventListener("click", () => {
+  runExportAction(
+    copyMarkdownButton,
+    "get-latest-markdown",
+    "Copying\u2026",
+    async (result) => {
+      await navigator.clipboard.writeText(result.markdown || "");
+      return "Latest assistant answer copied as Markdown.";
+    },
+  );
+});
+
+exportMarkdownButton.addEventListener("click", () => {
+  const startExport = (imageAccess) => {
+    runExportAction(
+      exportMarkdownButton,
+      "export-conversation-markdown",
+      "Exporting\u2026",
+      (result) =>
+        `Downloaded ${result.messages || 0} messages and ${
+          result.images || 0
+        } images${
+          result.failedImages ? `; ${result.failedImages} kept as links` : ""
+        }${imageAccess ? "" : "; image-host access was not granted"}.`,
+    );
+  };
+  chrome.permissions.contains({ origins: EXPORT_IMAGE_ORIGINS }, (granted) => {
+    if (granted) {
+      startExport(true);
+      return;
+    }
+    // Chrome closes the popup for a host-permission prompt. The worker watches
+    // for the grant and starts this pending export after the popup is gone.
+    chrome.storage.local.set({ [KEY_PENDING_EXPORT]: Date.now() });
+    chrome.permissions.request({ origins: EXPORT_IMAGE_ORIGINS }, (accepted) => {
+      if (!accepted) {
+        chrome.storage.local.remove(KEY_PENDING_EXPORT);
+        startExport(false);
+      }
+    });
+  });
+});
+
+printConversationButton.addEventListener("click", () => {
+  runExportAction(
+    printConversationButton,
+    "print-conversation",
+    "Preparing\u2026",
+    () => {
+      window.setTimeout(() => window.close(), 50);
+      return "Opening print dialog\u2026";
+    },
+  );
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>AIEnabler - AdBlock for ChatGPT</title>
+    <title>AIEnabler: Block Ads &amp; Export Chats</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -74,6 +74,13 @@
         gap: 8px;
         flex-wrap: wrap;
       }
+      .export-row button {
+        flex: 1 1 130px;
+      }
+      #export-status {
+        min-height: 17px;
+        margin: 7px 0 0;
+      }
       textarea {
         width: 100%;
         box-sizing: border-box;
@@ -90,8 +97,11 @@
   </head>
   <body>
     <h1>AIEnabler</h1>
-    <p class="subtitle">AdBlock for ChatGPT</p>
-    <p>Hides sponsored cards around ChatGPT answers. Answer text is never touched.</p>
+    <p class="subtitle">Block Ads &amp; Export Chats</p>
+    <p>
+      Hide sponsored cards and export answers locally. ChatGPT is supported now;
+      other chat sites are planned. Answer text is never rewritten.
+    </p>
 
     <label class="toggle">
       <input type="checkbox" id="toggle" />
@@ -110,6 +120,23 @@
       ChatGPT: if a chat ever shows <strong>Unable to connect</strong>, turn this
       back off and hard-refresh the tab. Ads stay hidden either way.
     </p>
+
+    <hr />
+
+    <p>
+      Local export tools. Images that ChatGPT allows the browser to read are
+      bundled with Markdown; PDF uses the browser print dialog.
+    </p>
+    <div class="row export-row">
+      <button id="copy-markdown" type="button">Copy latest as MD</button>
+      <button id="export-markdown" type="button">Export chat + images</button>
+      <button id="print-conversation" type="button">Print / save PDF</button>
+    </div>
+    <p class="hint">
+      Shortcuts: Ctrl+Shift+M copies the latest answer; Ctrl+Shift+E exports the
+      chat. Customize them at chrome://extensions/shortcuts.
+    </p>
+    <p id="export-status" class="hint" role="status" aria-live="polite"></p>
 
     <hr />
 

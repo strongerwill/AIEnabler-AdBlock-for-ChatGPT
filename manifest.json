@@ -1,21 +1,32 @@
 {
   "manifest_version": 3,
-  "name": "AIEnabler - AdBlock for ChatGPT",
-  "version": "1.5.1",
-  "description": "Hides sponsored ad cards that appear around ChatGPT responses.",
-  "permissions": ["storage", "declarativeNetRequestWithHostAccess"],
+  "name": "AIEnabler: Block Ads & Export Chats",
+  "version": "1.6.0",
+  "description": "Hide sponsored cards and export ChatGPT chats locally as Markdown, ZIP, tables, code, or PDF.",
+  "permissions": [
+    "storage",
+    "clipboardWrite",
+    "offscreen",
+    "declarativeNetRequestWithHostAccess"
+  ],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://*.chatgpt.com/*",
     "https://chat.openai.com/*"
   ],
-  "optional_host_permissions": ["https://bzrcdn.openai.com/*"],
+  "optional_host_permissions": [
+    "https://bzrcdn.openai.com/*",
+    "https://*.oaiusercontent.com/*",
+    "https://*.oaistatic.com/*",
+    "https://images.openai.com/*",
+    "https://oaidalleapiprodscus.blob.core.windows.net/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "AIEnabler - AdBlock for ChatGPT",
+    "default_title": "AIEnabler: Block Ads & Export Chats",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -27,6 +38,22 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
+  "commands": {
+    "copy-latest-markdown": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+M",
+        "mac": "Command+Shift+M"
+      },
+      "description": "Copy the latest answer as Markdown"
+    },
+    "export-conversation-markdown": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
+      },
+      "description": "Export the conversation as Markdown"
+    }
+  },
   "content_scripts": [
     {
       "matches": [
@@ -34,8 +61,8 @@
         "https://*.chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
-      "css": ["content/hide-ads.css"],
-      "js": ["content/hide-ads.js"],
+      "css": ["content/hide-ads.css", "content/export-tools.css"],
+      "js": ["content/hide-ads.js", "content/export-tools.js"],
       "run_at": "document_start",
       "all_frames": true
     }

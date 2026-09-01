@@ -1,5 +1,5 @@
 /**
- * AIEnabler - AdBlock for ChatGPT (content script).
+ * AIEnabler ad-hiding content script.
  *
  * Detection is pattern based rather than a fixed selector list, because
  * ChatGPT ships hashed class names and renames data attributes often.
