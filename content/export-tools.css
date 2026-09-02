@@ -34,9 +34,11 @@
   outline-offset: 2px;
 }
 
+/* Tight above, roomy below, so the buttons read as belonging to the block they
+   follow rather than to the next one when two blocks sit back to back. */
 .aienabler-table-tools,
 .aienabler-code-tools {
-  margin: 4px 0;
+  margin: 2px 0 14px;
   opacity: 0.72;
 }
 

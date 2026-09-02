@@ -27,7 +27,22 @@ const CREATIVE_DOMAINS = ["bzrcdn.openai.com"];
  * the sentinel frame, the beacons and the partial-update script chunks all live
  * on them.
  */
-const PROTECTED_DOMAINS = ["chatgpt.com", "chat.openai.com"];
+const PROTECTED_DOMAINS = [
+  "chatgpt.com",
+  "chat.openai.com",
+  "gemini.google.com",
+  "claude.ai",
+  "chat.deepseek.com",
+  "grok.com",
+  "grok.x.ai",
+  "copilot.microsoft.com",
+  "perplexity.ai",
+  "chat.mistral.ai",
+  "kimi.com",
+  "kimi.moonshot.cn",
+  "chat.qwen.ai",
+  "poe.com",
+];
 
 const RULES = [
   {
@@ -60,15 +75,7 @@ function isSafeRule(rule) {
 }
 
 const SAFE_RULES = RULES.filter(isSafeRule);
-const MAX_EXPORT_IMAGE_BYTES = 25 * 1024 * 1024;
 const OFFSCREEN_DOCUMENT = "offscreen/offscreen.html";
-const KEY_PENDING_EXPORT = "pendingMarkdownExport";
-const EXPORT_IMAGE_ORIGINS = new Set([
-  "https://*.oaiusercontent.com/*",
-  "https://*.oaistatic.com/*",
-  "https://images.openai.com/*",
-  "https://oaidalleapiprodscus.blob.core.windows.net/*",
-]);
 let creatingOffscreen = null;
 
 async function syncRules() {
@@ -101,81 +108,260 @@ function safeSyncRules() {
   });
 }
 
-chrome.runtime.onInstalled.addListener(safeSyncRules);
-chrome.runtime.onStartup.addListener(safeSyncRules);
+/** Sites where only the export tools run. Ad hiding stays ChatGPT-only. */
+const EXPORT_ONLY_MATCHES = [
+  "https://gemini.google.com/*",
+  "https://claude.ai/*",
+  "https://*.claude.ai/*",
+  "https://chat.deepseek.com/*",
+  "https://grok.com/*",
+  "https://grok.x.ai/*",
+  "https://copilot.microsoft.com/*",
+  "https://www.perplexity.ai/*",
+  "https://perplexity.ai/*",
+  "https://chat.mistral.ai/*",
+  "https://www.kimi.com/*",
+  "https://kimi.com/*",
+  "https://kimi.moonshot.cn/*",
+  "https://chat.qwen.ai/*",
+  "https://poe.com/*",
+];
+
+const CHATGPT_MATCHES = [
+  "https://chatgpt.com/*",
+  "https://*.chatgpt.com/*",
+  "https://chat.openai.com/*",
+];
+
+/**
+ * Frames a chat site renders diagrams in. Never a tab of their own, so nothing
+ * is injected into them from here - the declared content script covers them -
+ * but the access still has to be granted for that script to run.
+ */
+const FRAME_MATCHES = [
+  "https://*.claudeusercontent.com/*",
+  "https://*.claudemcpcontent.com/*",
+];
+
+/**
+ * Chrome only injects content scripts into pages loaded after the extension
+ * starts, so a tab that was already open would need a manual reload before the
+ * copy and export controls appeared. Injecting on install and on browser start
+ * removes that step. Already-injected tabs are skipped, because re-running the
+ * scripts in the same tab would throw on their top-level declarations.
+ */
+/**
+ * The reader script for diagram frames, injected on its own because a tab that
+ * already has the page scripts can still be holding a frame that has none - a
+ * frame loaded before access to its domain was granted.
+ */
+async function injectFrameReader(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      files: ["content/frame-tools.js"],
+    });
+    return true;
+  } catch {
+    // No access to those frames. The export marks the diagram as unreadable
+    // instead, which is the honest outcome.
+    return false;
+  }
+}
+
+async function injectIntoTab(tabId, group) {
+  await injectFrameReader(tabId);
+  const [probe] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => Boolean(window.__AIENABLER_EXPORT_TOOLS__),
+  });
+  if (probe?.result) return false;
+  await chrome.scripting.insertCSS({ target: { tabId }, files: group.css });
+  await chrome.scripting.executeScript({ target: { tabId }, files: group.js });
+  return true;
+}
+
+async function injectIntoOpenTabs() {
+  const groups = [
+    {
+      matches: CHATGPT_MATCHES,
+      css: ["content/hide-ads.css", "content/export-tools.css"],
+      js: [
+        "content/sites.js",
+        "content/hide-ads.js",
+        "content/export-tools.js",
+      ],
+    },
+    {
+      matches: EXPORT_ONLY_MATCHES,
+      css: ["content/export-tools.css"],
+      js: ["content/sites.js", "content/export-tools.js"],
+    },
+  ];
+
+  for (const group of groups) {
+    let tabs = [];
+    try {
+      tabs = await chrome.tabs.query({ url: group.matches });
+    } catch {
+      continue;
+    }
+    for (const tab of tabs) {
+      if (!tab.id) continue;
+      try {
+        await injectIntoTab(tab.id, group);
+      } catch {
+        /* Tab closed, still loading, or not scriptable: it will load normally. */
+      }
+    }
+  }
+}
+
+function safeInjectIntoOpenTabs() {
+  injectIntoOpenTabs().catch(() => {
+    /* Injection is a convenience; a page load installs the scripts anyway. */
+  });
+}
+
+/** True for a match pattern naming one of the chat sites, e.g. from a grant. */
+function isChatSiteOrigin(origin) {
+  return [...CHATGPT_MATCHES, ...EXPORT_ONLY_MATCHES].includes(origin);
+}
+
+const ALL_MATCHES = [
+  ...CHATGPT_MATCHES,
+  ...EXPORT_ONLY_MATCHES,
+  ...FRAME_MATCHES,
+];
+
+/**
+ * Chrome withholds host access when site access is set to "on click", and when
+ * an update widens the declared hosts. Either way the content script silently
+ * never runs, so the toolbar badge is what tells the user to open the popup
+ * rather than leaving them to guess why the buttons are missing.
+ */
+async function refreshAccessBadge() {
+  let granted = true;
+  try {
+    granted = await chrome.permissions.contains({ origins: ALL_MATCHES });
+  } catch {
+    return;
+  }
+  try {
+    await chrome.action.setBadgeText({ text: granted ? "" : "!" });
+    if (!granted) {
+      await chrome.action.setBadgeBackgroundColor({ color: "#c2410c" });
+      await chrome.action.setTitle({
+        title:
+          "AIEnabler: open the popup to let the chat sites run automatically",
+      });
+    } else {
+      await chrome.action.setTitle({
+        title: "AIEnabler: Block Ads & Export Chats",
+      });
+    }
+  } catch {
+    /* The action API is unavailable while the worker is shutting down. */
+  }
+}
+
+function safeRefreshAccessBadge() {
+  refreshAccessBadge().catch(() => {
+    /* A missing badge is cosmetic; never break the worker over it. */
+  });
+}
+
+chrome.permissions.onRemoved.addListener(safeRefreshAccessBadge);
+
+function chatHostGroup(url) {
+  let hostname;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return null;
+    hostname = parsed.hostname;
+  } catch {
+    return null;
+  }
+  const chatgptHosts = ["chatgpt.com", "chat.openai.com"];
+  const exportHosts = [
+    "gemini.google.com",
+    "claude.ai",
+    "chat.deepseek.com",
+    "grok.com",
+    "grok.x.ai",
+    "copilot.microsoft.com",
+    "perplexity.ai",
+    "chat.mistral.ai",
+    "kimi.com",
+    "kimi.moonshot.cn",
+    "chat.qwen.ai",
+    "poe.com",
+  ];
+  if (hostAllowed(hostname, chatgptHosts)) {
+    return {
+      css: ["content/hide-ads.css", "content/export-tools.css"],
+      js: [
+        "content/sites.js",
+        "content/hide-ads.js",
+        "content/export-tools.js",
+      ],
+    };
+  }
+  if (hostAllowed(hostname, exportHosts)) {
+    return {
+      css: ["content/export-tools.css"],
+      js: ["content/sites.js", "content/export-tools.js"],
+    };
+  }
+  return null;
+}
+
+/**
+ * Belt and braces for the declared content scripts. A tab can end up without
+ * them - a permission that was granted after the tab opened, an extension
+ * reload, or a navigation the declarative match missed - and the only visible
+ * symptom is that no toolbar ever appears. Re-injecting on load is cheap
+ * because an already-injected tab is detected and skipped.
+ */
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+  const group = chatHostGroup(tab?.url || "");
+  if (!group) return;
+  injectIntoTab(tabId, group).catch(() => {
+    /* Not scriptable yet; the periodic sweep or a reload will cover it. */
+  });
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  safeSyncRules();
+  safeInjectIntoOpenTabs();
+  safeRefreshAccessBadge();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  safeSyncRules();
+  safeInjectIntoOpenTabs();
+  safeRefreshAccessBadge();
+});
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes[KEY_BLOCK_NETWORK]) safeSyncRules();
 });
 
-function isChatGptSender(sender) {
-  try {
-    const url = new URL(sender.tab?.url || "");
-    return (
-      url.protocol === "https:" &&
-      (url.hostname === "chatgpt.com" ||
-        url.hostname.endsWith(".chatgpt.com") ||
-        url.hostname === "chat.openai.com")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isAllowedExportImageUrl(value) {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      (url.hostname === "images.openai.com" ||
-        url.hostname === "oaidalleapiprodscus.blob.core.windows.net" ||
-        url.hostname.endsWith(".oaiusercontent.com") ||
-        url.hostname.endsWith(".oaistatic.com"))
-    );
-  } catch {
-    return false;
-  }
-}
-
-function bytesToBase64(bytes) {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-  }
-  return btoa(binary);
+function hostAllowed(hostname, allowed) {
+  return allowed.some(
+    (host) => hostname === host || hostname.endsWith(`.${host}`),
+  );
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "aienabler-fetch-image") return undefined;
-  if (!isChatGptSender(sender) || !isAllowedExportImageUrl(message.url)) {
-    sendResponse({ ok: false, error: "Image URL was refused." });
+  if (message?.type !== "aienabler-inject-frames") return undefined;
+  const tabId = sender.tab?.id;
+  if (!tabId || !chatHostGroup(sender.tab?.url || "")) {
+    sendResponse({ ok: false });
     return undefined;
   }
-  (async () => {
-    const response = await fetch(message.url, { credentials: "omit" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    if (!isAllowedExportImageUrl(response.url)) {
-      throw new Error("Image redirect was refused.");
-    }
-    const declaredSize = Number(response.headers.get("content-length")) || 0;
-    if (declaredSize > MAX_EXPORT_IMAGE_BYTES) {
-      throw new Error("Image is over 25 MB");
-    }
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length > MAX_EXPORT_IMAGE_BYTES) {
-      throw new Error("Image is over 25 MB");
-    }
-    return {
-      ok: true,
-      contentType: (response.headers.get("content-type") || "").split(";")[0],
-      data: bytesToBase64(bytes),
-    };
-  })()
-    .then(sendResponse)
-    .catch((error) =>
-      sendResponse({ ok: false, error: error.message || "Image fetch failed." }),
-    );
+  injectFrameReader(tabId).then((ok) => sendResponse({ ok }));
   return true;
 });
 
@@ -186,7 +372,7 @@ async function ensureOffscreenDocument() {
       .createDocument({
         url: OFFSCREEN_DOCUMENT,
         reasons: ["CLIPBOARD"],
-        justification: "Copy locally converted ChatGPT Markdown on shortcut.",
+        justification: "Copy locally converted chat Markdown on shortcut.",
       })
       .finally(() => {
         creatingOffscreen = null;
@@ -205,68 +391,44 @@ async function copyWithOffscreenDocument(text) {
   if (!result?.ok) throw new Error(result?.error || "Copy failed.");
 }
 
-async function runPendingMarkdownExport() {
-  const stored = await chrome.storage.local.get(KEY_PENDING_EXPORT);
-  const requestedAt = Number(stored[KEY_PENDING_EXPORT]) || 0;
-  await chrome.storage.local.remove(KEY_PENDING_EXPORT);
-  if (!requestedAt || Date.now() - requestedAt > 120_000) return;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return;
-  await chrome.tabs.sendMessage(tab.id, {
-    type: "aienabler-export",
-    action: "export-conversation-markdown",
-  });
-}
-
 chrome.permissions.onAdded.addListener((permissions) => {
-  if (
-    (permissions.origins || []).some((origin) =>
-      EXPORT_IMAGE_ORIGINS.has(origin),
-    )
-  ) {
-    runPendingMarkdownExport().catch(() => {
-      /* The ChatGPT tab was closed while the permission prompt was open. */
-    });
-  }
+  const origins = permissions.origins || [];
+  // Site access just went from "on click" to allowed, so the tabs that were
+  // open under the old setting still have no content script.
+  if (origins.some(isChatSiteOrigin)) safeInjectIntoOpenTabs();
+  safeRefreshAccessBadge();
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
-  if (
-    command !== "copy-latest-markdown" &&
-    command !== "export-conversation-markdown"
-  ) {
+  if (command !== "copy-latest-markdown" && command !== "print-conversation") {
     return;
   }
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
-    if (command === "copy-latest-markdown") {
-      const response = await chrome.tabs.sendMessage(tab.id, {
-        type: "aienabler-export",
-        action: "get-latest-markdown",
-      });
-      if (!response?.ok || !response.result?.markdown) {
-        throw new Error(response?.error || "No answer was found.");
-      }
-      await copyWithOffscreenDocument(response.result.markdown);
-    } else {
-      try {
-        await chrome.permissions.request({
-          origins: Array.from(EXPORT_IMAGE_ORIGINS),
-        });
-      } catch {
-        /* Export still succeeds with original links if access is denied. */
-      }
+    if (command === "print-conversation") {
       await chrome.tabs.sendMessage(tab.id, {
         type: "aienabler-export",
-        action: command,
+        action: "print-conversation",
       });
+      return;
     }
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: "aienabler-export",
+      action: "get-latest-markdown",
+    });
+    if (!response?.ok || !response.result?.markdown) {
+      throw new Error(response?.error || "No answer was found.");
+    }
+    // The page cannot reach the clipboard without a click, so the worker hands
+    // the text to an offscreen document that can.
+    await copyWithOffscreenDocument(response.result.markdown);
   } catch {
-    /* The active tab is not a supported ChatGPT page. */
+    /* The active tab is not a supported chat page. */
   }
 });
 
 // Also on every service-worker start: an update that leaves stale rules behind
 // must not need a browser restart to become harmless.
 safeSyncRules();
+safeRefreshAccessBadge();

@@ -99,8 +99,9 @@
     <h1>AIEnabler</h1>
     <p class="subtitle">Block Ads &amp; Export Chats</p>
     <p>
-      Hide sponsored cards and export answers locally. ChatGPT is supported now;
-      other chat sites are planned. Answer text is never rewritten.
+      Hide ChatGPT sponsored cards, and export answers locally from ChatGPT,
+      Gemini, Claude, DeepSeek, Grok, Copilot, Perplexity, Mistral, Kimi, Qwen,
+      and Poe. Answer text is never rewritten.
     </p>
 
     <label class="toggle">
@@ -123,18 +124,29 @@
 
     <hr />
 
+    <p id="site-status" role="status" aria-live="polite">Checking this tab…</p>
+    <div class="row">
+      <button id="enable-site" type="button" hidden>Enable on this site</button>
+      <button id="enable-all-sites" type="button" hidden>
+        Auto-run on all chat sites
+      </button>
+    </div>
+    <p class="hint" id="auto-run-hint" hidden>
+      Chrome is set to run this extension only when clicked, so the tools stay
+      off until you allow the chat sites once.
+    </p>
+
     <p>
-      Local export tools. Images that ChatGPT allows the browser to read are
-      bundled with Markdown; PDF uses the browser print dialog.
+      Local export tools for the whole thread. Each answer carries its own copy
+      and PDF buttons in the page. PDF uses the browser print dialog.
     </p>
     <div class="row export-row">
       <button id="copy-markdown" type="button">Copy latest as MD</button>
-      <button id="export-markdown" type="button">Export chat + images</button>
       <button id="print-conversation" type="button">Print / save PDF</button>
     </div>
     <p class="hint">
-      Shortcuts: Ctrl+Shift+M copies the latest answer; Ctrl+Shift+E exports the
-      chat. Customize them at chrome://extensions/shortcuts.
+      Shortcuts: Ctrl+Shift+M copies the latest answer; Ctrl+Shift+E opens the
+      print view. Customize them at chrome://extensions/shortcuts.
     </p>
     <p id="export-status" class="hint" role="status" aria-live="polite"></p>
 

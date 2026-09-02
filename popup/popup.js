@@ -3,7 +3,6 @@ const KEY_DIAG_REQUEST = "diagnosticsRequest";
 const KEY_DIAG_RESULT = "diagnosticsResult";
 const KEY_STATS = "lastStats";
 const KEY_BLOCK_NETWORK = "blockNetwork";
-const KEY_PENDING_EXPORT = "pendingMarkdownExport";
 
 /**
  * Ad creative host. Requested only when network blocking is switched on, so a
@@ -11,12 +10,6 @@ const KEY_PENDING_EXPORT = "pendingMarkdownExport";
  * cannot end up on while the rule is inert for lack of access.
  */
 const CREATIVE_ORIGIN = "https://bzrcdn.openai.com/*";
-const EXPORT_IMAGE_ORIGINS = [
-  "https://*.oaiusercontent.com/*",
-  "https://*.oaistatic.com/*",
-  "https://images.openai.com/*",
-  "https://oaidalleapiprodscus.blob.core.windows.net/*",
-];
 
 const toggle = document.getElementById("toggle");
 const network = document.getElementById("network");
@@ -26,9 +19,201 @@ const scanButton = document.getElementById("scan");
 const copyButton = document.getElementById("copy");
 const report = document.getElementById("report");
 const copyMarkdownButton = document.getElementById("copy-markdown");
-const exportMarkdownButton = document.getElementById("export-markdown");
 const printConversationButton = document.getElementById("print-conversation");
 const exportStatus = document.getElementById("export-status");
+const siteStatus = document.getElementById("site-status");
+const enableSiteButton = document.getElementById("enable-site");
+const enableAllSitesButton = document.getElementById("enable-all-sites");
+const autoRunHint = document.getElementById("auto-run-hint");
+
+/**
+ * Every chat origin the extension declares. Chrome withholds these when site
+ * access is left on "run on click", and withheld hosts mean no content script
+ * and no toolbars - so the popup can grant them all in one prompt.
+ */
+const ALL_SITE_ORIGINS = [
+  "https://chatgpt.com/*",
+  "https://*.chatgpt.com/*",
+  "https://chat.openai.com/*",
+  "https://gemini.google.com/*",
+  "https://claude.ai/*",
+  "https://*.claude.ai/*",
+  // The frames Claude draws diagrams in. Without them an export keeps the text
+  // and loses every picture.
+  "https://*.claudeusercontent.com/*",
+  "https://*.claudemcpcontent.com/*",
+  "https://chat.deepseek.com/*",
+  "https://grok.com/*",
+  "https://grok.x.ai/*",
+  "https://copilot.microsoft.com/*",
+  "https://www.perplexity.ai/*",
+  "https://perplexity.ai/*",
+  "https://chat.mistral.ai/*",
+  "https://www.kimi.com/*",
+  "https://kimi.com/*",
+  "https://kimi.moonshot.cn/*",
+  "https://chat.qwen.ai/*",
+  "https://poe.com/*",
+];
+
+/** Chat sites the export tools run on, mirrored from the manifest. */
+const CHATGPT_HOSTS = ["chatgpt.com", "chat.openai.com"];
+const EXPORT_HOSTS = [
+  "gemini.google.com",
+  "claude.ai",
+  "chat.deepseek.com",
+  "grok.com",
+  "grok.x.ai",
+  "copilot.microsoft.com",
+  "perplexity.ai",
+  "chat.mistral.ai",
+  "kimi.com",
+  "kimi.moonshot.cn",
+  "chat.qwen.ai",
+  "poe.com",
+];
+
+function hostMatches(hostname, hosts) {
+  return hosts.some((host) => hostname === host || hostname.endsWith(`.${host}`));
+}
+
+function tabSiteGroup(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:") return null;
+  if (hostMatches(parsed.hostname, CHATGPT_HOSTS)) {
+    return {
+      origin: `${parsed.origin}/*`,
+      css: ["content/hide-ads.css", "content/export-tools.css"],
+      js: [
+        "content/sites.js",
+        "content/hide-ads.js",
+        "content/export-tools.js",
+      ],
+    };
+  }
+  if (hostMatches(parsed.hostname, EXPORT_HOSTS)) {
+    return {
+      origin: `${parsed.origin}/*`,
+      css: ["content/export-tools.css"],
+      js: ["content/sites.js", "content/export-tools.js"],
+    };
+  }
+  return null;
+}
+
+function askContentScript(tabId, action) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: "aienabler-export", action }, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve(null);
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+/**
+ * Chrome does not run content scripts in tabs that were already open when the
+ * extension started, and it withholds newly added host permissions on update.
+ * Both look identical to the user - no toolbars - so the popup reports which
+ * one it is and offers the one-click fix.
+ */
+async function refreshAutoRunState() {
+  const granted = await chrome.permissions.contains({
+    origins: ALL_SITE_ORIGINS,
+  });
+  enableAllSitesButton.hidden = granted;
+  autoRunHint.hidden = granted;
+  return granted;
+}
+
+async function refreshSiteStatus() {
+  await refreshAutoRunState();
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const group = tab?.url ? tabSiteGroup(tab.url) : null;
+  enableSiteButton.hidden = true;
+  if (!tab?.id || !group) {
+    siteStatus.textContent =
+      "This tab is not a supported chat site. Export tools stay hidden here.";
+    return;
+  }
+
+  const status = await askContentScript(tab.id, "status");
+  if (status?.ok) {
+    const result = status.result || {};
+    // Diagrams live in frames of their own and are the part most likely to go
+    // missing, so the count is reported whenever the page has any.
+    const diagrams = result.frames
+      ? ` ${result.framesRead || 0}/${result.frames} diagrams readable.`
+      : "";
+    siteStatus.textContent = result.messages
+      ? `${result.site || "This site"}: ${result.messages} messages detected, ${
+          result.toolbars || 0
+        } toolbars placed.${diagrams}`
+      : `${result.site || "This site"}: connected, but no messages were found yet. Open a conversation.`;
+    return;
+  }
+
+  const granted = await chrome.permissions.contains({ origins: [group.origin] });
+  if (!granted) {
+    siteStatus.textContent =
+      "This site is not enabled yet, so the export tools cannot run here.";
+    enableSiteButton.hidden = false;
+    return;
+  }
+
+  siteStatus.textContent = "Activating the export tools on this tab…";
+  try {
+    await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: group.css });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: group.js });
+    const retry = await askContentScript(tab.id, "status");
+    siteStatus.textContent = retry?.ok
+      ? `${retry.result?.site || "This site"}: activated, ${
+          retry.result?.messages || 0
+        } messages detected.`
+      : "Could not activate here. Reload the page and open the popup again.";
+  } catch {
+    siteStatus.textContent =
+      "Could not activate here. Reload the page and open the popup again.";
+  }
+}
+
+enableAllSitesButton.addEventListener("click", () => {
+  // Called straight from the click: the permission prompt needs the gesture,
+  // and Chrome closes the popup while it is up.
+  chrome.permissions.request({ origins: ALL_SITE_ORIGINS }, (granted) => {
+    if (!granted) {
+      siteStatus.textContent =
+        "Site access was not granted, so the tools still run only when clicked.";
+      return;
+    }
+    refreshSiteStatus().catch(() => {
+      siteStatus.textContent = "Enabled. Open a chat tab to use the tools.";
+    });
+  });
+});
+
+enableSiteButton.addEventListener("click", async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const group = tab?.url ? tabSiteGroup(tab.url) : null;
+  if (!group) return;
+  const granted = await chrome.permissions.request({ origins: [group.origin] });
+  if (!granted) {
+    siteStatus.textContent = "Site access was not granted, so nothing changed.";
+    return;
+  }
+  await refreshSiteStatus();
+});
+
+refreshSiteStatus().catch(() => {
+  siteStatus.textContent = "Could not read this tab.";
+});
 
 let scanStartedAt = 0;
 let scanTimer = 0;
@@ -144,7 +329,7 @@ function runExportAction(button, action, pendingText, doneText) {
     if (chrome.runtime.lastError || !tab?.id) {
       button.disabled = false;
       button.textContent = originalText;
-      exportStatus.textContent = "Open a ChatGPT conversation and try again.";
+      exportStatus.textContent = "Open a supported chat tab and try again.";
       return;
     }
     chrome.tabs.sendMessage(
@@ -155,7 +340,7 @@ function runExportAction(button, action, pendingText, doneText) {
         button.textContent = originalText;
         if (chrome.runtime.lastError || !response) {
           exportStatus.textContent =
-            "Reload the open ChatGPT tab, then try again.";
+            "Reload the open chat tab, then try again.";
           return;
         }
         if (!response.ok) {
@@ -186,37 +371,6 @@ copyMarkdownButton.addEventListener("click", () => {
       return "Latest assistant answer copied as Markdown.";
     },
   );
-});
-
-exportMarkdownButton.addEventListener("click", () => {
-  const startExport = (imageAccess) => {
-    runExportAction(
-      exportMarkdownButton,
-      "export-conversation-markdown",
-      "Exporting\u2026",
-      (result) =>
-        `Downloaded ${result.messages || 0} messages and ${
-          result.images || 0
-        } images${
-          result.failedImages ? `; ${result.failedImages} kept as links` : ""
-        }${imageAccess ? "" : "; image-host access was not granted"}.`,
-    );
-  };
-  chrome.permissions.contains({ origins: EXPORT_IMAGE_ORIGINS }, (granted) => {
-    if (granted) {
-      startExport(true);
-      return;
-    }
-    // Chrome closes the popup for a host-permission prompt. The worker watches
-    // for the grant and starts this pending export after the popup is gone.
-    chrome.storage.local.set({ [KEY_PENDING_EXPORT]: Date.now() });
-    chrome.permissions.request({ origins: EXPORT_IMAGE_ORIGINS }, (accepted) => {
-      if (!accepted) {
-        chrome.storage.local.remove(KEY_PENDING_EXPORT);
-        startExport(false);
-      }
-    });
-  });
 });
 
 printConversationButton.addEventListener("click", () => {

@@ -1,26 +1,38 @@
 {
   "manifest_version": 3,
   "name": "AIEnabler: Block Ads & Export Chats",
-  "version": "1.6.0",
-  "description": "Hide sponsored cards and export ChatGPT chats locally as Markdown, ZIP, tables, code, or PDF.",
+  "version": "1.9.2",
+  "description": "Hide ChatGPT sponsored cards and export chats locally from ChatGPT, Gemini, Claude, DeepSeek, and other popular AI chats.",
   "permissions": [
     "storage",
     "clipboardWrite",
     "offscreen",
+    "scripting",
     "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://*.chatgpt.com/*",
-    "https://chat.openai.com/*"
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://claude.ai/*",
+    "https://*.claude.ai/*",
+    "https://*.claudeusercontent.com/*",
+    "https://*.claudemcpcontent.com/*",
+    "https://chat.deepseek.com/*",
+    "https://grok.com/*",
+    "https://grok.x.ai/*",
+    "https://copilot.microsoft.com/*",
+    "https://www.perplexity.ai/*",
+    "https://perplexity.ai/*",
+    "https://chat.mistral.ai/*",
+    "https://www.kimi.com/*",
+    "https://kimi.com/*",
+    "https://kimi.moonshot.cn/*",
+    "https://chat.qwen.ai/*",
+    "https://poe.com/*"
   ],
-  "optional_host_permissions": [
-    "https://bzrcdn.openai.com/*",
-    "https://*.oaiusercontent.com/*",
-    "https://*.oaistatic.com/*",
-    "https://images.openai.com/*",
-    "https://oaidalleapiprodscus.blob.core.windows.net/*"
-  ],
+  "optional_host_permissions": ["https://bzrcdn.openai.com/*"],
   "background": {
     "service_worker": "background.js"
   },
@@ -46,12 +58,12 @@
       },
       "description": "Copy the latest answer as Markdown"
     },
-    "export-conversation-markdown": {
+    "print-conversation": {
       "suggested_key": {
         "default": "Ctrl+Shift+E",
         "mac": "Command+Shift+E"
       },
-      "description": "Export the conversation as Markdown"
+      "description": "Open the print view to save the chat as PDF"
     }
   },
   "content_scripts": [
@@ -62,8 +74,43 @@
         "https://chat.openai.com/*"
       ],
       "css": ["content/hide-ads.css", "content/export-tools.css"],
-      "js": ["content/hide-ads.js", "content/export-tools.js"],
+      "js": [
+        "content/sites.js",
+        "content/hide-ads.js",
+        "content/export-tools.js"
+      ],
       "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://gemini.google.com/*",
+        "https://claude.ai/*",
+        "https://*.claude.ai/*",
+        "https://chat.deepseek.com/*",
+        "https://grok.com/*",
+        "https://grok.x.ai/*",
+        "https://copilot.microsoft.com/*",
+        "https://www.perplexity.ai/*",
+        "https://perplexity.ai/*",
+        "https://chat.mistral.ai/*",
+        "https://www.kimi.com/*",
+        "https://kimi.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://chat.qwen.ai/*",
+        "https://poe.com/*"
+      ],
+      "css": ["content/export-tools.css"],
+      "js": ["content/sites.js", "content/export-tools.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.claudeusercontent.com/*",
+        "https://*.claudemcpcontent.com/*"
+      ],
+      "js": ["content/frame-tools.js"],
+      "run_at": "document_idle",
       "all_frames": true
     }
   ]

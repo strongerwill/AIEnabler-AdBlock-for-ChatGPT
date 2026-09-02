@@ -6,23 +6,20 @@
   const HTML_NS = "http://www.w3.org/1999/xhtml";
   const HIDDEN_SELECTOR =
     "[data-gpt-ad-filter], .gpt-ad-filter-hidden, [data-aienabler-ui]";
-  const BODY_SELECTOR = [
-    "[data-assistant-markdown]",
-    "[data-message-content]",
-    "[data-user-message-copy]",
-    "[data-user-message-bubble]",
-    ".markdown",
-    ".prose",
-  ].join(", ");
-  const TURN_SELECTOR = [
-    "[data-message-role]",
-    "[data-message-author-role]",
-    "[data-turn]",
-    "[data-message-id]",
-    '[data-testid^="conversation-turn"]',
-    ".agent-turn",
-  ].join(", ");
-  const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+  const joinSelectors = (selectors) => (selectors || []).filter(Boolean).join(", ");
+  const SITE = window.AIEnablerSites?.forHost(location.hostname) || null;
+  const BODY_SELECTOR = joinSelectors(
+    SITE?.body || [".markdown", ".prose", "[data-message-content]"],
+  );
+  const TURN_SELECTOR = joinSelectors(
+    SITE?.turn || [
+      "[data-message-role]",
+      "[data-message-id]",
+      "[data-testid^='conversation-turn']",
+    ],
+  );
+  const ASSISTANT_SELECTOR = joinSelectors(SITE?.assistant);
+  const USER_SELECTOR = joinSelectors(SITE?.user);
   /**
    * Reference chips and inline badges render at favicon size on the page, but
    * an export loses ChatGPT's stylesheet and falls back to the file's intrinsic
@@ -30,6 +27,20 @@
    * icon: dropped from Markdown, and pinned to its on-screen size when printed.
    */
   const ICON_MAX_PX = 32;
+  /** Marks a frame the export could not read, so it leaves a visible trace. */
+  const EMBED_ATTR = "data-aienabler-embed";
+  /** Below this box a frame is a tracker or a helper, not part of the answer. */
+  const EMBED_MIN_PX = 80;
+  const FRAME_REQUEST = "aienabler-frame-request";
+  const FRAME_REPLY = "aienabler-frame-reply";
+  /** Long enough for a frame still drawing, short enough not to stall a copy. */
+  const FRAME_REPLY_MS = 1500;
+  /**
+   * A diagram is inlined as a data URI so the Markdown file stands on its own.
+   * Past this size the URI is longer than the text around it and unreadable in
+   * an editor, so an oversized drawing is named rather than embedded.
+   */
+  const MAX_INLINE_SVG_CHARS = 400000;
 
   function cleanText(value) {
     return String(value || "")
@@ -157,12 +168,73 @@
     return `${lines.join("\n")}\n\n`;
   }
 
+  /** btoa handles bytes, not text, so the markup is encoded to UTF-8 first. */
+  function base64Utf8(value) {
+    const bytes = new TextEncoder().encode(value);
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  }
+
+  /**
+   * Standalone markup for a diagram that was drawn as part of the page: it
+   * inherits its size and colours from a stylesheet the export will not have,
+   * so both are written onto the copy.
+   */
+  function svgMarkup(svg) {
+    const { width, height } = stampedBox(svg);
+    const clone = svg.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    if (!clone.getAttribute("viewBox") && width && height) {
+      clone.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    }
+    if (width) clone.setAttribute("width", String(width));
+    if (height) clone.setAttribute("height", String(height));
+    for (const script of clone.querySelectorAll("script")) script.remove();
+    for (const element of [clone, ...clone.querySelectorAll("*")]) {
+      for (const attribute of Array.from(element.attributes || [])) {
+        if (/^on/i.test(attribute.name)) element.removeAttribute(attribute.name);
+      }
+    }
+    return new XMLSerializer().serializeToString(clone);
+  }
+
+  /**
+   * Stays inline: a reference chip is an icon and a word inside one link, so a
+   * blank line here would split `[text](url)` down the middle and leave the
+   * closing half stranded in the output.
+   */
+  function svgToMarkdown(svg) {
+    // Icon-sized vectors are bullets, arrows and logos, and only add noise. The
+    // box is read from the attributes stamped while cloning, because by now the
+    // node is detached and would measure zero.
+    if (isIconImage(svg)) return "";
+    let markup = "";
+    try {
+      markup = svgMarkup(svg);
+    } catch {
+      markup = "";
+    }
+    if (!markup || markup.length > MAX_INLINE_SVG_CHARS) {
+      return "*[Diagram, viewable only in the page]*";
+    }
+    const alt = cleanText(svg.getAttribute("aria-label") || "") || "diagram";
+    return `![${alt}](data:image/svg+xml;base64,${base64Utf8(markup)})`;
+  }
+
   function nodeToMarkdown(node, context = { listDepth: 0 }) {
     if (!node) return "";
     if (node.nodeType === Node.TEXT_NODE) return escapeMarkdown(node.nodeValue);
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
     if (node.matches(HIDDEN_SELECTOR)) return "";
-    if (node.namespaceURI && node.namespaceURI !== HTML_NS) return "";
+    if (node.hasAttribute?.(EMBED_ATTR)) {
+      return `\n\n*[${cleanText(node.textContent)}]*\n\n`;
+    }
+    // SVG lives in its own namespace, so the HTML rules below do not apply to
+    // it. A diagram is worth carrying over; the rest of the namespace is not.
+    if (node.namespaceURI && node.namespaceURI !== HTML_NS) {
+      return node.localName === "svg" ? svgToMarkdown(node) : "";
+    }
 
     const tag = node.tagName;
     if (/^H[1-6]$/.test(tag)) {
@@ -225,32 +297,58 @@
     return content;
   }
 
+  function looksLikeRole(text, kind) {
+    const value = String(text || "").toLowerCase();
+    if (kind === "assistant") {
+      return /\b(assistant|model|bot|claude|gemini|grok|deepseek|copilot|ai)\b/.test(
+        value,
+      );
+    }
+    return /\b(user|human|prompt|query|you)\b/.test(value);
+  }
+
   function elementRole(element) {
     const host = element.closest(TURN_SELECTOR);
     const value = [
       host?.getAttribute("data-message-role"),
       host?.getAttribute("data-message-author-role"),
       host?.getAttribute("data-turn"),
+      host?.getAttribute("data-content"),
       element.getAttribute("data-message-role"),
       element.getAttribute("data-message-author-role"),
+      element.getAttribute("data-content"),
     ]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
-    if (value.includes("assistant")) return "assistant";
-    if (value.includes("user")) return "user";
-    if (host?.classList.contains("agent-turn")) return "assistant";
+    if (looksLikeRole(value, "assistant")) return "assistant";
+    if (looksLikeRole(value, "user")) return "user";
     if (
-      element.matches("[data-assistant-markdown]") ||
-      host?.querySelector("[data-assistant-markdown]")
+      ASSISTANT_SELECTOR &&
+      (element.matches(ASSISTANT_SELECTOR) || host?.matches(ASSISTANT_SELECTOR))
     ) {
       return "assistant";
     }
     if (
-      element.matches("[data-user-message-copy], [data-user-message-bubble]") ||
-      host?.querySelector("[data-user-message-copy], [data-user-message-bubble]")
+      USER_SELECTOR &&
+      (element.matches(USER_SELECTOR) || host?.matches(USER_SELECTOR))
     ) {
       return "user";
+    }
+    const tagged = `${element.tagName} ${host?.tagName || ""}`.toLowerCase();
+    if (tagged.includes("model-response") || tagged.includes("message-content")) {
+      return "assistant";
+    }
+    if (tagged.includes("user-query")) return "user";
+    const classBlob = `${element.className || ""} ${host?.className || ""}`;
+    if (looksLikeRole(classBlob, "assistant")) return "assistant";
+    if (looksLikeRole(classBlob, "user")) return "user";
+    if (
+      element.matches(
+        ".markdown, .prose, .ds-markdown, .markdown-body, .standard-markdown, message-content",
+      )
+    ) {
+      return "assistant";
     }
     return null;
   }
@@ -263,6 +361,7 @@
   function messageGroups() {
     const groups = [];
     const byTurn = new Map();
+    if (!BODY_SELECTOR) return groups;
     for (const body of document.querySelectorAll(BODY_SELECTOR)) {
       if (body.closest(`[${UI_ATTR}]`) || body.closest(HIDDEN_SELECTOR)) continue;
       // Keep the innermost container only: an outer wrapper that also matches
@@ -280,7 +379,40 @@
       byTurn.set(turn, created);
       groups.push(created);
     }
+    for (const group of groups) addTurnEmbeds(group);
     return groups;
+  }
+
+  /**
+   * A diagram can be rendered in a frame that sits beside the text container
+   * rather than inside it, and only the innermost text container is exported -
+   * so the picture would fall outside the export entirely, with not even a gap
+   * to show for it. Any answer-sized frame elsewhere in the turn is folded in,
+   * then the parts are put back into the order they appear on the page.
+   */
+  function addTurnEmbeds(group) {
+    if (group.turn === group.bodies[0]) return;
+    for (const frame of group.turn.querySelectorAll("iframe")) {
+      const { width, height } = renderedBox(frame);
+      if (width < EMBED_MIN_PX || height < EMBED_MIN_PX) continue;
+      if (group.bodies.some((body) => body.contains(frame))) continue;
+      group.bodies.push(frame);
+    }
+    group.bodies.sort(inDocumentOrder);
+  }
+
+  function inDocumentOrder(left, right) {
+    const position = left.compareDocumentPosition(right);
+    if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  }
+
+  /** The element itself counts too, since a body can be the frame in question. */
+  function selfAndDescendants(root, selector) {
+    const found = Array.from(root.querySelectorAll(selector));
+    if (root.matches?.(selector)) found.unshift(root);
+    return found;
   }
 
   function latestAssistantGroup() {
@@ -295,15 +427,136 @@
     return { width, height };
   }
 
+  /**
+   * The on-screen box recorded while cloning. Markdown is built from a detached
+   * clone, where measuring gives zero, so the size has to be read back from the
+   * attributes rather than taken again.
+   */
+  function stampedBox(element) {
+    return {
+      width: Number(element.dataset?.aienablerWidth) || 0,
+      height: Number(element.dataset?.aienablerHeight) || 0,
+    };
+  }
+
   function isIconImage(element) {
-    const width = Number(element.dataset?.aienablerWidth) || 0;
-    const height = Number(element.dataset?.aienablerHeight) || 0;
+    const { width, height } = stampedBox(element);
     return width > 0 && height > 0 && width <= ICON_MAX_PX && height <= ICON_MAX_PX;
   }
 
+  /** Drawings collected from frames, keyed by the frame that produced them. */
+  const framePayloads = new WeakMap();
+  let frameRequests = 0;
+
+  /** Asks one frame for its drawing, giving up rather than blocking forever. */
+  function askFrame(frame) {
+    return new Promise((resolve) => {
+      const id = `aienabler-${(frameRequests += 1)}`;
+      let timer = 0;
+      const stop = (payload) => {
+        window.clearTimeout(timer);
+        window.removeEventListener("message", onMessage);
+        resolve(payload);
+      };
+      const onMessage = (event) => {
+        const reply = event.data;
+        if (!reply || reply.type !== FRAME_REPLY || reply.id !== id) return;
+        // Any frame on the page can post a message, so only the one that was
+        // asked is allowed to answer for itself.
+        if (event.source !== frame.contentWindow) return;
+        stop(reply.payload || null);
+      };
+      window.addEventListener("message", onMessage);
+      timer = window.setTimeout(() => stop(null), FRAME_REPLY_MS);
+      try {
+        frame.contentWindow?.postMessage({ type: FRAME_REQUEST, id }, "*");
+      } catch {
+        stop(null);
+      }
+    });
+  }
+
+  /**
+   * Asks the worker to put the reader script into this tab's frames. A frame
+   * that was already loaded when access to its domain was granted never got the
+   * script and would stay silent until the page is reloaded; this is what saves
+   * the reload.
+   */
+  function requestFrameReader() {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: "aienabler-inject-frames" },
+          (response) => {
+            void chrome.runtime.lastError;
+            resolve(Boolean(response?.ok));
+          },
+        );
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  /** Collects drawings from every answer-sized frame, all frames at once. */
+  async function resolveFrames(bodies) {
+    const pending = [];
+    for (const body of bodies) {
+      for (const frame of selfAndDescendants(body, "iframe")) {
+        const { width, height } = renderedBox(frame);
+        if (width < EMBED_MIN_PX || height < EMBED_MIN_PX) continue;
+        if (framePayloads.has(frame) || pending.includes(frame)) continue;
+        pending.push(frame);
+      }
+    }
+    if (!pending.length) return;
+    let payloads = await Promise.all(pending.map(askFrame));
+    // Silence usually means the frame loaded before its domain was granted and
+    // so never received the reader. Placing it now avoids a page reload.
+    if (payloads.some((payload) => !payload) && (await requestFrameReader())) {
+      const retried = await Promise.all(
+        pending.map((frame, index) =>
+          payloads[index] ? null : askFrame(frame),
+        ),
+      );
+      payloads = payloads.map((payload, index) => payload || retried[index]);
+    }
+    payloads.forEach((payload, index) => {
+      if (payload) framePayloads.set(pending[index], payload);
+    });
+  }
+
+  /** Rebuilds an SVG from the markup a frame sent over as text. */
+  function parseFrameSvg(markup) {
+    const parsed = new DOMParser().parseFromString(markup, "image/svg+xml");
+    if (parsed.querySelector("parsererror")) return null;
+    const svg = parsed.documentElement;
+    return svg && svg.localName === "svg"
+      ? document.importNode(svg, true)
+      : null;
+  }
+
+  /** The drawing a frame handed over, as an element the export understands. */
+  function frameElement(payload) {
+    if (payload?.kind === "svg" && payload.markup) {
+      return parseFrameSvg(payload.markup);
+    }
+    if (payload?.kind === "png" && payload.dataUrl) {
+      const image = document.createElement("img");
+      image.src = payload.dataUrl;
+      if (payload.width) image.width = payload.width;
+      if (payload.height) image.height = payload.height;
+      return image;
+    }
+    return null;
+  }
+
   function cleanClone(body) {
-    const clone = body.cloneNode(true);
-    const originalMedia = Array.from(body.querySelectorAll("img, svg"));
+    // Wrapped rather than used bare, so a body that is itself a frame can be
+    // swapped for the drawing it holds like any other node would be.
+    const clone = document.createElement("div");
+    clone.appendChild(body.cloneNode(true));
+    const originalMedia = selfAndDescendants(body, "img, svg");
     for (const [index, media] of Array.from(
       clone.querySelectorAll("img, svg"),
     ).entries()) {
@@ -311,15 +564,51 @@
       const { width, height } = renderedBox(source);
       media.dataset.aienablerWidth = String(width);
       media.dataset.aienablerHeight = String(height);
-      if (media.tagName === "IMG") {
-        media.dataset.aienablerSource =
-          source?.currentSrc || source?.getAttribute("src") || "";
+    }
+    // A frame's document belongs to another origin, so its drawing has to be
+    // collected beforehand by the script running inside it. What came back
+    // takes the frame's place; a frame that said nothing leaves a note instead
+    // of vanishing unexplained. Tiny frames are trackers and helpers, and go.
+    const originalFrames = selfAndDescendants(body, "iframe");
+    for (const [index, frame] of Array.from(
+      clone.querySelectorAll("iframe"),
+    ).entries()) {
+      const source = originalFrames[index];
+      const { width, height } = renderedBox(source);
+      if (width < EMBED_MIN_PX || height < EMBED_MIN_PX) {
+        frame.remove();
+        continue;
+      }
+      const payload = framePayloads.get(source);
+      const drawing = payload ? frameElement(payload) : null;
+      if (drawing) {
+        frame.replaceWith(drawing);
+        continue;
+      }
+      const note = document.createElement("div");
+      note.setAttribute(EMBED_ATTR, "1");
+      note.textContent = "Embedded content, viewable only in the page";
+      frame.replaceWith(note);
+    }
+    // Buttons are page chrome - copy, edit, feedback - except when a site wraps
+    // a figure in one to make it open full screen. Those are unwrapped, because
+    // dropping them takes the diagram or picture with them.
+    for (const button of clone.querySelectorAll("button")) {
+      if (button.querySelector("img, svg, canvas, table, pre")) {
+        button.replaceWith(...button.childNodes);
+      } else {
+        button.remove();
       }
     }
     for (const element of clone.querySelectorAll(
-      `${HIDDEN_SELECTOR}, script, style, iframe, object, embed, template, form, button`,
+      `${HIDDEN_SELECTOR}, script, object, embed, template, form`,
     )) {
       element.remove();
+    }
+    // Page stylesheets have no business in an export, but an inline diagram
+    // carries its own <style> and renders as blank shapes without it.
+    for (const style of clone.querySelectorAll("style")) {
+      if (style.namespaceURI === HTML_NS) style.remove();
     }
     for (const element of [clone, ...clone.querySelectorAll("*")]) {
       for (const attribute of Array.from(element.attributes || [])) {
@@ -404,6 +693,7 @@
   }
 
   async function copyGroupMarkdown(group) {
+    await resolveFrames(group.bodies);
     const markdown = groupMarkdown(group);
     if (!markdown) throw new Error("No answer content was found.");
     await writeClipboard(markdown);
@@ -436,34 +726,59 @@
     return button;
   }
 
+  /** One toolbar per turn, so a turn rendered in several parts keeps just one. */
+  const turnToolbars = new WeakMap();
+
+  /**
+   * Re-read on click rather than captured at install time, because streaming
+   * keeps adding bodies to a turn after its toolbar is in place.
+   */
+  function currentGroup(group) {
+    return (
+      messageGroups().find((candidate) => candidate.turn === group.turn) || group
+    );
+  }
+
   function installMessageTools(group) {
     const anchor = group.bodies.at(-1);
-    if (!anchor || anchor.dataset.aienablerExportReady === "1") return;
-    anchor.dataset.aienablerExportReady = "1";
+    if (!anchor) return;
+    let tools = turnToolbars.get(group.turn);
+    if (!tools) {
+      tools = document.createElement("div");
+      tools.className = "aienabler-tools";
+      tools.setAttribute(UI_ATTR, "message");
+      tools.append(
+        makeButton("Copy Markdown", async (button) => {
+          await copyGroupMarkdown(currentGroup(group));
+          flashButton(button, "Copied");
+        }),
+        makeButton("Save PDF", async (button) => {
+          flashButton(button, "Opening\u2026");
+          await printConversation([currentGroup(group)]);
+        }),
+      );
+      turnToolbars.set(group.turn, tools);
+    }
     const host = anchor.parentElement || anchor;
     host.classList.add("aienabler-export-host");
-    const tools = document.createElement("div");
-    tools.className = "aienabler-tools";
-    tools.setAttribute(UI_ATTR, "message");
-    tools.append(
-      makeButton("Copy Markdown", async (button) => {
-        // Resolved on click: streaming may have added more bodies to this turn
-        // since the button was installed.
-        const current =
-          messageGroups().find((candidate) => candidate.turn === group.turn) ||
-          group;
-        await copyGroupMarkdown(current);
-        flashButton(button, "Copied");
-      }),
-    );
-    anchor.insertAdjacentElement("afterend", tools);
+    // Streaming appends further bodies below an installed toolbar. Moving it
+    // only when the newest body sits after it keeps it at the end of the answer
+    // without the mutation it causes triggering another move.
+    const stranded =
+      tools.isConnected &&
+      Boolean(
+        tools.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    if (!tools.isConnected || stranded) {
+      anchor.insertAdjacentElement("afterend", tools);
+    }
   }
 
   /**
-   * ChatGPT wraps code blocks in horizontally scrolling containers. A toolbar
-   * placed directly after the block would sit inside that scroller and could
-   * require scrolling to reach, so it is attached after the outermost wrapper
-   * that holds nothing else. Stops at the message body either way.
+   * Chat sites wrap tables and code blocks in horizontally scrolling
+   * containers. A toolbar placed directly after the element would sit inside
+   * that scroller and could require scrolling to reach, so it is attached after
+   * the outermost wrapper that holds nothing else. Stops at the message body.
    */
   function toolbarAnchor(element) {
     let anchor = element;
@@ -474,6 +789,27 @@
       anchor = parent;
     }
     return anchor;
+  }
+
+  /**
+   * Puts a toolbar below its block. Coming after the wrapper in the DOM is not
+   * enough on its own, because a wrapper is free to paint its children in
+   * another order - a reversed flex column, or a grid that places them. So the
+   * result is checked against the rendered boxes, and only a toolbar that ends
+   * up wholly above its block is flipped to the other side of the wrapper,
+   * which is where such a container paints it last.
+   */
+  function placeToolbarBelow(block, tools) {
+    const anchor = toolbarAnchor(block);
+    anchor.insertAdjacentElement("afterend", tools);
+    const blockBox = block.getBoundingClientRect();
+    const toolsBox = tools.getBoundingClientRect();
+    // Zero boxes mean nothing is laid out yet (a collapsed block, a hidden
+    // tab), and there is no position to judge.
+    if (!blockBox.height || !toolsBox.height) return;
+    if (toolsBox.bottom <= blockBox.top + 1) {
+      anchor.insertAdjacentElement("beforebegin", tools);
+    }
   }
 
   function installTableTools(table) {
@@ -494,7 +830,7 @@
         flashButton(button, "Copied");
       }),
     );
-    table.insertAdjacentElement("beforebegin", tools);
+    placeToolbarBelow(table, tools);
   }
 
   function installCodeTools(pre) {
@@ -526,7 +862,7 @@
         flashButton(button, "Copied");
       }),
     );
-    toolbarAnchor(pre).insertAdjacentElement("afterend", tools);
+    placeToolbarBelow(pre, tools);
   }
 
   function installInlineTools() {
@@ -549,298 +885,18 @@
   }
 
   function fileSafeTitle() {
+    const fallback = SITE ? `${SITE.label} conversation` : "AI conversation";
+    const stripped = SITE?.titleStrip
+      ? document.title.replace(SITE.titleStrip, "")
+      : document.title;
     const raw =
-      document.querySelector("main h1")?.textContent ||
-      document.title.replace(/\s*[|—-]\s*ChatGPT.*$/i, "") ||
-      "ChatGPT conversation";
+      document.querySelector("main h1")?.textContent || stripped || fallback;
     return (
       raw
         .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
         .replace(/[.\s]+$/g, "")
-        .slice(0, 90) || "ChatGPT conversation"
+        .slice(0, 90) || fallback
     );
-  }
-
-  function imageExtension(type, source) {
-    const byType = {
-      "image/png": "png",
-      "image/jpeg": "jpg",
-      "image/gif": "gif",
-      "image/webp": "webp",
-      "image/svg+xml": "svg",
-      "image/avif": "avif",
-    };
-    if (byType[type]) return byType[type];
-    const match = String(source).match(/\.([a-z0-9]{2,5})(?:[?#]|$)/i);
-    return match?.[1].toLowerCase() || "bin";
-  }
-
-  function bytesFromBase64(value) {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    return bytes;
-  }
-
-  function sniffImageType(bytes) {
-    if (
-      bytes[0] === 0x89 &&
-      bytes[1] === 0x50 &&
-      bytes[2] === 0x4e &&
-      bytes[3] === 0x47
-    ) {
-      return "image/png";
-    }
-    if (bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
-    if (
-      String.fromCharCode(...bytes.slice(0, 6)) === "GIF87a" ||
-      String.fromCharCode(...bytes.slice(0, 6)) === "GIF89a"
-    ) {
-      return "image/gif";
-    }
-    if (
-      String.fromCharCode(...bytes.slice(0, 4)) === "RIFF" &&
-      String.fromCharCode(...bytes.slice(8, 12)) === "WEBP"
-    ) {
-      return "image/webp";
-    }
-    const start = new TextDecoder()
-      .decode(bytes.slice(0, 256))
-      .replace(/^\s+/, "");
-    return start.startsWith("<svg") || start.startsWith("<?xml")
-      ? "image/svg+xml"
-      : "";
-  }
-
-  function fetchImageFromExtension(source) {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(
-        { type: "aienabler-fetch-image", url: source },
-        (response) => {
-          if (chrome.runtime.lastError || !response?.ok) {
-            reject(
-              new Error(
-                response?.error ||
-                  chrome.runtime.lastError?.message ||
-                  "extension fetch failed",
-              ),
-            );
-            return;
-          }
-          resolve({
-            bytes: bytesFromBase64(response.data),
-            type: response.contentType || "",
-          });
-        },
-      );
-    });
-  }
-
-  async function readImage(source) {
-    try {
-      const response = await fetch(source, { credentials: "include" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
-      if (blob.size > MAX_IMAGE_BYTES) throw new Error("Image is over 25 MB");
-      return {
-        bytes: new Uint8Array(await blob.arrayBuffer()),
-        type: blob.type,
-      };
-    } catch (pageError) {
-      if (!/^https:/i.test(source)) throw pageError;
-      return fetchImageFromExtension(source);
-    }
-  }
-
-  async function localizeImages(clone, state) {
-    const clonedImages = Array.from(clone.querySelectorAll("img"));
-    for (const image of clonedImages) {
-      const source =
-        image.dataset.aienablerSource || image.getAttribute("src") || "";
-      delete image.dataset.aienablerSource;
-      // Reference icons are dropped from Markdown, so bundling them would only
-      // grow the ZIP with files nothing links to.
-      if (!source || isIconImage(image)) continue;
-      if (state.paths.has(source)) {
-        image.setAttribute("src", state.paths.get(source));
-        continue;
-      }
-      try {
-        const result = await readImage(source);
-        if (result.bytes.length > MAX_IMAGE_BYTES) {
-          throw new Error("Image is over 25 MB");
-        }
-        const type =
-          (result.type.startsWith("image/") && result.type) ||
-          sniffImageType(result.bytes);
-        if (!type) throw new Error("Not a recognized image");
-        const extension = imageExtension(type, source);
-        const path = `images/image-${String(state.nextImage).padStart(
-          3,
-          "0",
-        )}.${extension}`;
-        state.nextImage += 1;
-        state.paths.set(source, path);
-        state.files.push({
-          name: path,
-          bytes: result.bytes,
-        });
-        image.setAttribute("src", path);
-        image.removeAttribute("srcset");
-      } catch (error) {
-        state.failures.push(`${source} — ${error.message || "download failed"}`);
-      }
-    }
-  }
-
-  function encode(value) {
-    return new TextEncoder().encode(value);
-  }
-
-  const CRC_TABLE = (() => {
-    const table = new Uint32Array(256);
-    for (let index = 0; index < 256; index += 1) {
-      let value = index;
-      for (let bit = 0; bit < 8; bit += 1) {
-        value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-      }
-      table[index] = value >>> 0;
-    }
-    return table;
-  })();
-
-  function crc32(bytes) {
-    let crc = 0xffffffff;
-    for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-    return (crc ^ 0xffffffff) >>> 0;
-  }
-
-  function zipDateTime(date = new Date()) {
-    return {
-      time:
-        ((date.getHours() & 31) << 11) |
-        ((date.getMinutes() & 63) << 5) |
-        ((date.getSeconds() / 2) & 31),
-      date:
-        (((Math.max(1980, date.getFullYear()) - 1980) & 127) << 9) |
-        (((date.getMonth() + 1) & 15) << 5) |
-        (date.getDate() & 31),
-    };
-  }
-
-  function zipFiles(files) {
-    const localParts = [];
-    const centralParts = [];
-    let offset = 0;
-    const stamp = zipDateTime();
-    for (const file of files) {
-      const name = encode(file.name);
-      const bytes = file.bytes instanceof Uint8Array ? file.bytes : encode(file.bytes);
-      const checksum = crc32(bytes);
-      const local = new Uint8Array(30 + name.length);
-      const localView = new DataView(local.buffer);
-      localView.setUint32(0, 0x04034b50, true);
-      localView.setUint16(4, 20, true);
-      localView.setUint16(6, 0x0800, true);
-      localView.setUint16(8, 0, true);
-      localView.setUint16(10, stamp.time, true);
-      localView.setUint16(12, stamp.date, true);
-      localView.setUint32(14, checksum, true);
-      localView.setUint32(18, bytes.length, true);
-      localView.setUint32(22, bytes.length, true);
-      localView.setUint16(26, name.length, true);
-      local.set(name, 30);
-      localParts.push(local, bytes);
-
-      const central = new Uint8Array(46 + name.length);
-      const centralView = new DataView(central.buffer);
-      centralView.setUint32(0, 0x02014b50, true);
-      centralView.setUint16(4, 20, true);
-      centralView.setUint16(6, 20, true);
-      centralView.setUint16(8, 0x0800, true);
-      centralView.setUint16(10, 0, true);
-      centralView.setUint16(12, stamp.time, true);
-      centralView.setUint16(14, stamp.date, true);
-      centralView.setUint32(16, checksum, true);
-      centralView.setUint32(20, bytes.length, true);
-      centralView.setUint32(24, bytes.length, true);
-      centralView.setUint16(28, name.length, true);
-      centralView.setUint32(42, offset, true);
-      central.set(name, 46);
-      centralParts.push(central);
-      offset += local.length + bytes.length;
-    }
-    const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
-    const end = new Uint8Array(22);
-    const endView = new DataView(end.buffer);
-    endView.setUint32(0, 0x06054b50, true);
-    endView.setUint16(8, files.length, true);
-    endView.setUint16(10, files.length, true);
-    endView.setUint32(12, centralSize, true);
-    endView.setUint32(16, offset, true);
-    return new Blob([...localParts, ...centralParts, end], {
-      type: "application/zip",
-    });
-  }
-
-  function downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.style.display = "none";
-    document.documentElement.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  }
-
-  async function exportConversation() {
-    const groups = messageGroups();
-    if (!groups.length) throw new Error("No conversation content was found.");
-    const state = { files: [], paths: new Map(), failures: [], nextImage: 1 };
-    const parts = [
-      `# ${escapeMarkdown(fileSafeTitle())}`,
-      "",
-      `> Exported: ${new Date().toISOString()}`,
-      `> Source: ${location.href}`,
-      "",
-    ];
-    for (const group of groups) {
-      const blocks = [];
-      for (const body of group.bodies) {
-        const clone = cleanClone(body);
-        await localizeImages(clone, state);
-        const markdown = normalizeMarkdown(nodeToMarkdown(clone));
-        if (markdown) blocks.push(markdown);
-      }
-      if (!blocks.length) continue;
-      parts.push(
-        `## ${group.role === "user" ? "User" : "Assistant"}`,
-        "",
-        blocks.join("\n\n"),
-        "",
-      );
-    }
-    if (state.failures.length) {
-      parts.push(
-        "## Image download notes",
-        "",
-        "These images could not be bundled; their original links remain in the Markdown:",
-        "",
-        ...state.failures.map((failure) => `- ${failure}`),
-        "",
-      );
-    }
-    state.files.unshift({ name: "conversation.md", bytes: encode(parts.join("\n")) });
-    downloadBlob(zipFiles(state.files), `${fileSafeTitle()}.zip`);
-    return {
-      messages: groups.length,
-      images: state.files.length - 1,
-      failedImages: state.failures.length,
-    };
   }
 
   /**
@@ -858,13 +914,13 @@
       if (isIconImage(media)) media.classList.add("aienabler-icon");
       delete media.dataset.aienablerWidth;
       delete media.dataset.aienablerHeight;
-      delete media.dataset.aienablerSource;
     }
   }
 
-  function printConversation() {
-    const groups = messageGroups();
+  /** Prints the given turns, or the whole thread when none are named. */
+  async function printConversation(groups = messageGroups()) {
     if (!groups.length) throw new Error("No conversation content was found.");
+    await resolveFrames(groups.flatMap(({ bodies }) => bodies));
     const frame = document.createElement("iframe");
     frame.setAttribute(UI_ATTR, "print");
     frame.style.cssText =
@@ -890,16 +946,26 @@
       <style>
         @page { margin: 16mm; }
         body { color: #111; font: 11pt/1.55 system-ui, sans-serif; margin: 0 auto; max-width: 850px; }
-        h1 { font-size: 20pt; margin: 0 0 8mm; } h2 { font-size: 11pt; color: #666; margin: 0 0 3mm; }
-        .message { break-inside: avoid-page; border-top: 1px solid #ddd; padding: 6mm 0; }
+        h1 { font-size: 20pt; margin: 0 0 5mm; }
+        h2 { font-size: 11pt; color: #666; margin: 0 0 3mm; break-after: avoid; }
+        /* An answer runs as long as it needs to and simply flows onto the next
+           page. Keeping a turn whole would push anything taller than the space
+           left under the title onto page two, leaving page one nearly blank. */
+        .message { border-top: 1px solid #ddd; padding: 5mm 0; }
+        .message:first-of-type { border-top: 0; padding-top: 0; }
+        .message:last-of-type { padding-bottom: 0; }
+        p { orphans: 2; widows: 2; }
         /* Wraps only at existing spaces, and small enough that a wide ASCII
            diagram fits a line: breaking mid-run would misalign the drawing. */
         pre { white-space: pre-wrap; overflow-wrap: normal; word-break: normal;
               font-size: 9pt; line-height: 1.35; background: #f5f5f5; padding: 3mm; }
         code { font-family: ui-monospace, monospace; }
-        img, svg { max-width: 100%; height: auto; }
+        img, svg { max-width: 100%; height: auto; break-inside: avoid; }
         .aienabler-icon { width: auto; max-height: 1.1em; vertical-align: text-bottom; }
         table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid #bbb; padding: 2mm; text-align: left; }
+        thead { display: table-header-group; } tr { break-inside: avoid; }
+        [${EMBED_ATTR}] { border: 1px dashed #bbb; color: #666; font-size: 9pt;
+                          padding: 4mm; text-align: center; }
         a { color: inherit; overflow-wrap: anywhere; }
       </style></head><body><h1>${escapeHtml(fileSafeTitle())}</h1>${rows}</body></html>`);
     doc.close();
@@ -944,6 +1010,7 @@
       const group = latestAssistantGroup();
       if (!group) throw new Error("No assistant answer was found.");
       if (action === "get-latest-markdown") {
+        await resolveFrames(group.bodies);
         const markdown = groupMarkdown(group);
         if (!markdown) throw new Error("No answer content was found.");
         return { markdown };
@@ -951,10 +1018,35 @@
       await copyGroupMarkdown(group);
       return { copied: true };
     }
-    if (action === "export-conversation-markdown") return exportConversation();
     if (action === "print-conversation") {
-      printConversation();
+      await printConversation();
       return { printing: true };
+    }
+    if (action === "status") {
+      installInlineTools();
+      const groups = messageGroups();
+      // Asking the frames as well, so the report separates "no diagram found in
+      // the answer" from "found one, but its frame never answered".
+      const allBodies = groups.flatMap(({ bodies }) => bodies);
+      const frames = allBodies
+        .flatMap((body) => selfAndDescendants(body, "iframe"))
+        .filter((frame) => {
+          const { width, height } = renderedBox(frame);
+          return width >= EMBED_MIN_PX && height >= EMBED_MIN_PX;
+        });
+      await resolveFrames(allBodies);
+      return {
+        frames: frames.length,
+        framesRead: frames.filter((frame) => framePayloads.has(frame)).length,
+        site: SITE?.label || null,
+        host: location.hostname,
+        messages: groups.length,
+        assistantMessages: groups.filter(({ role }) => role === "assistant").length,
+        toolbars: document.querySelectorAll(`[${UI_ATTR}]`).length,
+        bodyMatches: BODY_SELECTOR
+          ? document.querySelectorAll(BODY_SELECTOR).length
+          : 0,
+      };
     }
     throw new Error("Unknown export action.");
   }
@@ -974,6 +1066,25 @@
   } else {
     installInlineTools();
   }
+
+  /**
+   * These apps render the thread well after load and swap it wholesale when a
+   * conversation is opened from the sidebar. A mutation can also land while a
+   * turn is still half-built, so a cheap periodic pass while the tab is visible
+   * is what makes the buttons appear without a manual reload.
+   */
+  window.setInterval(() => {
+    if (document.visibilityState === "visible") scheduleInlineTools();
+  }, 1500);
+
+  try {
+    console.info(
+      `[AIEnabler] export tools ready on ${SITE?.label || location.hostname}`,
+    );
+  } catch {
+    /* console unavailable */
+  }
+
   for (const event of [
     "pageshow",
     "popstate",

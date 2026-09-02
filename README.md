@@ -1,164 +1,123 @@
 # AIEnabler: Block Ads & Export Chats
 
-Chrome extension (Manifest V3) that keeps ChatGPT answers usable: it hides
-sponsored cards around replies, and it copies or exports the conversation
-locally (Markdown, images, tables, code blocks, print/PDF). It never rewrites
-or removes the model's answer, and nothing is uploaded.
+Chrome extension (Manifest V3) that hides sponsored cards on ChatGPT and
+exports conversations locally from popular AI chats. It never rewrites the
+model's answer and never uploads the chat.
 
-Ad hiding is still scoped to sponsored chrome only. Plus/Go upsells, login
+**Export** works on ChatGPT, Gemini, Claude, DeepSeek, Grok, Microsoft Copilot,
+Perplexity, Mistral Le Chat, Kimi, Qwen, and Poe.
+
+**Ad hiding** is ChatGPT-only. That is where sponsored answer cards appear; the
+same heuristics would hide real UI on the other sites.
+
+## Features
+
+### Block ads (ChatGPT)
+
+Sponsored cards next to ChatGPT answers are hidden. Plus/Go upsells, login
 banners, cookie notices, and unlabeled recommendations are left alone.
 
-ChatGPT is the first site. Gemini, Claude, DeepSeek and similar chats are
-planned later; each site needs its own DOM adapters, so they are not claimed
-as supported until they actually work.
+- **Hide sponsored ads** in the popup is on by default (CSS + content script).
+- **Block ad requests** is experimental and **off**. It only blocks creatives
+  from the ad host; nothing on `chatgpt.com` is blocked, because earlier path
+  rules could stall the conversation on **Unable to connect. Retry**.
+- Answer text, the composer, the sidebar, auth sheets, and the Retry control
+  are never hidden — including an answer that merely mentions ads.
+
+### Export chats
+
+Reload the chat tab after installing or updating. Tools appear on hover under
+an assistant answer, and under a table or a multi-line code block.
+
+- **Copy Markdown** copies one assistant answer (the whole turn, not a fragment).
+- **Copy table MD** / **Copy CSV** copy a table. CSV also carries a table flavor
+  so spreadsheets paste real cells.
+- **Copy keeping layout** / **Copy MD** copy a multi-line code block. Layout copy
+  puts a monospace HTML flavor on the clipboard so ASCII diagrams stay aligned
+  in Word or mail; editors still get the exact text. Single-line blocks have no
+  toolbar.
+- **Save PDF** sits beside **Copy Markdown** and prints that one answer in a
+  clean view — choose **Save as PDF**.
+- The popup copies the latest answer, and its **Print / save PDF** covers the
+  whole thread rather than one answer.
+- `Ctrl+Shift+M` copies the latest answer; `Ctrl+Shift+E` prints the thread.
+  Change shortcuts at `chrome://extensions/shortcuts`.
+
+Reference icons stay small in PDF and are omitted from Markdown. Diagrams drawn
+as inline SVG (Mermaid flowcharts, for example) are inlined into the Markdown as
+a data URI so the picture travels with the text.
+
+Claude draws diagrams in a frame of its own origin, which the conversation
+cannot read. A small script runs inside those frames and hands the drawing back
+on request, so it reaches the export too — that is what the
+`claudeusercontent.com` and `claudemcpcontent.com` access is for. A frame that
+stays silent leaves a marked placeholder rather than disappearing.
+
+A fresh install grants every listed site up front, so nothing to click. Two
+things take that access away: setting the extension to run **only when
+clicked**, and an update that adds sites, which Chrome withholds until you
+approve it. Either way the content script never runs and no toolbar appears,
+so the toolbar icon shows a `!` badge.
+
+Open the popup to fix it: it offers **Auto-run on all chat sites** (one prompt
+covering every supported site) or **Enable on this site**. Granting access
+injects into tabs that are already open, so no reload is needed.
+
+The popup also reports whether the tools are connected to the current tab and
+how many messages they see, and the page console prints
+`[AIEnabler] export tools ready on <site>` once per load.
+
+Site layouts change often. If a copy/export misses a turn, reload the tab; if
+it still fails, send a note with the site name.
 
 ## Load unpacked
 
 1. Open `chrome://extensions`.
 2. Turn on **Developer mode**.
 3. Click **Load unpacked** and select this folder (`gpt-plugin`).
-4. Open [chatgpt.com](https://chatgpt.com), ask something that normally shows an ad, and confirm the sponsored card is gone while the answer stays.
-
-The toolbar popup toggles ad hiding, offers an experimental request-blocking
-switch (**off by default**), runs local exports, shows how many elements were
-hidden on the last ChatGPT page, and can capture a diagnostics report.
-
-## Local export tools
-
-Reload an open ChatGPT tab after installing or updating the extension. Export
-controls then appear when you hover over an assistant answer or a table:
-
-- **Copy Markdown** copies one assistant answer.
-- **Copy table MD** and **Copy CSV** copy a table in a reusable format. A CSV
-  copy also carries a table flavor, so spreadsheets paste real cells.
-- **Copy keeping layout** and **Copy MD** appear below a multi-line code block.
-  Code blocks often hold ASCII diagrams rather than code, and a plain-text paste
-  into Word, an email or a chat app re-flows them in a proportional font, which
-  breaks the alignment. **Copy keeping layout** therefore also puts a monospace
-  version on the clipboard, so rich-text targets keep the drawing intact while
-  editors and terminals still receive the exact text. Single-line blocks get no
-  toolbar, since one line cannot lose its alignment.
-- The extension popup can copy the latest answer, download the full conversation
-  as a ZIP (`conversation.md` plus an `images/` folder), or open a clean print
-  view. Choose **Save as PDF** in the browser print dialog.
-- `Ctrl+Shift+M` copies the latest answer and `Ctrl+Shift+E` exports the
-  conversation. Shortcuts can be changed at `chrome://extensions/shortcuts`.
-
-Image downloads stay local. The first image export asks for optional access to
-OpenAI's image-delivery hosts, then starts the pending export after access is
-granted. If another image host cannot be read, export keeps its original URL in
-Markdown and adds an image-download note instead of failing the whole export.
+4. Reload the chat tab, then confirm the copy/export controls appear (and, on
+   ChatGPT, that sponsored cards are hidden).
 
 ## How it works
 
-Four independent layers, because ChatGPT ships hashed class names and renames its `data-*` attributes often:
+Ad hiding (ChatGPT) uses CSS at `document_start`, then pattern matching on ad
+tokens, labels, click-through links, and embedded ad payloads. See
+[`content/hide-ads.js`](content/hide-ads.js) and
+[`content/hide-ads.css`](content/hide-ads.css).
 
-1. **Request blocking** ([`background.js`](background.js)) — **off by default, experimental.** When switched on it blocks ad *creatives* from the ad host (`bzrcdn.openai.com`) and nothing else. No request to `chatgpt.com` is blocked any more; see [Request blocking](#request-blocking) for why. The three layers below are what actually removes the ads, and they work with this switch off.
-2. **CSS** ([`content/hide-ads.css`](content/hide-ads.css)) hides known ad markers at `document_start`, before any script runs, so there is no flicker. Its main hook is the accessible name: the served unit is `<aside aria-label=" Sponsored ">` with a `Sponsored options` menu button, so labels are matched as substrings, padding and all. `:has()` then takes the wrapper that holds nothing but that aside, and the ad creative is caught by its host (`bzrcdn.openai.com`). Hiding is the *default* state — rules are gated on `html:not(.gpt-ad-filter-off)`, so they still apply if the content script fails to load, and the popup's off switch is what adds the class.
-3. **Attribute patterns** ([`content/hide-ads.js`](content/hide-ads.js)) match any element whose attribute *name* contains an ad token (`data-assistant-ads`, `data-ad-slot`, …) or whose `class`/`id`/`aria-label`/`data-testid` *value* contains one (`-ads-`, `sponsored`, `adCard`, `promoted`, …). This catches renamed attributes without a code change. Class hashes such as `_S47C4QYyCs` carry no tokens at all, which is why the layers below matter.
-4. **Anchors: labels, controls, links, creatives and payload** — a short standalone label (`Sponsored`, `Ad`, `广告`, `スポンサー`, `광고`, …), an ad control, a click-through link through the ad server (`oppref=`, `olref=`, `utm_medium=paidaeo`), an image from the creative host, or the analytics JSON the renderer embeds beside every ad (`adsRequestId`, `adDataToken`). Any one of them is enough: the ad's landmark wrapper is found by climbing from the anchor, so the card, its `About this ad` panel and its empty frame all go together. Marked nodes also get an inline `display: none`, so script-side hiding does not depend on the stylesheet either.
+Export walks conversation turns in
+[`content/export-tools.js`](content/export-tools.js), with per-site selectors in
+[`content/sites.js`](content/sites.js). Markdown conversion and the print
+document are both built in the tab; nothing is fetched to produce them.
+[`content/frame-tools.js`](content/frame-tools.js) runs inside diagram frames
+and answers a request for their drawing with `postMessage`; it starts nothing on
+its own.
 
-Re-sweeping is resilient to the lightweight renderer, which swaps large DOM regions: a `MutationObserver` over child lists, attributes and text (including open shadow roots), the renderer's own events (`web-mobile-conversation-state-change`, `pageshow`, `popstate`, …), and a cheap 1.5s interval while the tab is visible. Elements already found clean are remembered and only re-checked when they mutate, so streaming a long answer stays cheap.
+## Troubleshooting
 
-### Request blocking
+**Unable to connect. Retry** on ChatGPT is a blocked conversation request, not
+ad hiding. Turn **Block ad requests** off, reload the extension, then
+hard-refresh. If it still happens with blocking off, it is not this extension.
 
-Off by default, and deliberately narrow. Up to 1.4.1 the `declarativeNetRequest` rules matched ChatGPT's own origin by URL path — `assistant-ads-*.js`, `ads-analytics-*`, and a `/(?:ads|advertisement|sponsored)/` regex across xhr/image/ping/script. Those paths are not exclusive to advertising: the lightweight (unauthenticated) renderer streams conversations from `/unauth-mweb/conversation`, loads partial-update chunks from the same origin, and calls `/backend-api/` and `/backend-anon/` — so a blocked request there could leave a chat stuck on **Unable to connect. Retry**.
+**Temporarily experiencing issues** after a ChatGPT login prompt is OpenAI's
+anonymous rate limit. Log in, or start a new chat later.
 
-Since 1.5.0:
+**Still seeing a ChatGPT ad?** Keep the tab open, use **Scan open ChatGPT tab**,
+**Copy report**, and email
+[davidadblocker@gmail.com](mailto:davidadblocker@gmail.com?subject=AIEnabler%20Feedback)
+with subject **AIEnabler Feedback**. The console should show
+`[AIEnabler] ad filter running` once per load; if it does not, reload the tab.
 
-- Nothing on `chatgpt.com` / `chat.openai.com` is blocked. A rule that does not name the exact hosts it applies to, or that names a ChatGPT host, is refused in code — `/backend-api/`, `/backend-anon/`, `/unauth-mweb/conversation`, the sentinel frame, the beacon endpoints and the script chunks are all unreachable by any rule.
-- The only rule left blocks images/media from the ad creative host, and it is opt-in. Turning the switch on asks for access to that host (an *optional* permission), so a default install still has host access to ChatGPT only.
-- Dynamic rules survive extension updates, so the worker clears **every** existing dynamic rule on install, on browser start, and on each worker start. Upgrading from 1.4.x removes the old rules automatically.
-- The switch defaults to off, and unreadable storage also reads as off.
-
-Ad hiding does not depend on any of this: the CSS and script layers are what the extension relies on.
-
-### Safety guards
-
-Nothing is hidden if it is, or contains, answer text (`[data-assistant-markdown]`, `[data-message-content]`, `.markdown`, `.prose`), the transcript, the composer, or page chrome (`main`, `nav`, `header`, `footer`, the sidebar, the `wm-app-*` shell). So a card is only removed when it is a self-contained sibling of the answer.
-
-Every candidate also has to fit a text budget, from 800 characters for a card inferred from a label up to 2500 for an element the page named as an ad outright. Script and style contents are excluded from that measurement — the ad unit carries kilobytes of base64 in its own `<script type="application/json">`, and counting it made every real ad look like a page section.
-
-The chrome list is kept deliberately narrow, because one entry appearing *anywhere inside* an ad makes that whole ad unhideable. `aside`, `dialog` and `header` were all on it at some point, and the served ad is an `<aside>` whose `About this ad` panel is a `<dialog>` containing a `<header>` — so the ad was the one thing on the page that could not be touched. Those tags are now refused only as the hide target itself; the sidebar is protected by name.
-
-Deliberate exceptions:
-
-- An element that carries an ad attribute *itself* may be a whole conversation turn, since ChatGPT renders some ad units as their own turn with a markdown body. Page chrome is still off limits and the budget still applies.
-- Attribute names that only describe a capability (`data-ads-eligible`, `adsEnabled`, …) never match, because they mark containers that may host an ad rather than the ad.
-
-An answer that mentions ads is safe: anything inside rendered message text is ignored by the label, link and payload heuristics, and prose is a hard boundary when climbing to the card. So an answer containing the word "Sponsored", or quoting an ad URL, keeps both.
-
-## ChatGPT says "Unable to connect. Retry"
-
-That is a blocked or failed conversation request, not a hiding problem. If it happens with this extension installed:
-
-1. Open the popup and make sure **Block ad requests (experimental)** is **off**.
-2. Go to `chrome://extensions` and click **Reload** on AIEnabler. This restarts the service worker, which clears any leftover `declarativeNetRequest` rules — including ones written by 1.4.x, since dynamic rules persist across updates.
-3. Hard-refresh the ChatGPT tab (`Ctrl`/`Cmd` + `Shift` + `R`).
-
-A workaround that has the same effect, reported by a user on 1.4.1: switch the extension's site access (extension icon → **This can read and change site data**) to **When you click the extension**, then back to **On chatgpt.com**. Rules that require host access stop applying and the page reloads, so ChatGPT reconnects — and the ads stay hidden, because hiding is done by CSS and the content script.
-
-If the error persists with request blocking off and after a reload + hard refresh, it is not coming from this extension: check other ad blockers, then load ChatGPT with all extensions disabled to confirm.
-
-## ChatGPT says "temporarily experiencing issues" after a login prompt
-
-This one is ChatGPT's own limit on anonymous use, not a blocked request. Logged out, the page ships its own trigger:
-
-```json
-"noAuthSoftRateLimit": { "hasLoggedInBefore": false, "triggerMessageCount": 5 }
-```
-
-After that many messages ChatGPT opens its **Thanks for trying ChatGPT** sheet (`#no-auth-soft-rate-limit-dialog`). Choosing **Stay logged out** dismisses the sheet but not the limit, so the next turn comes back as `data-conversation-recovery-status="service-unavailable"` with a link to [status.openai.com](https://status.openai.com/). That is a server response, and it is a different state from the `failed` status behind "Unable to connect. Retry" above.
-
-Nothing in this extension can produce it: since 1.5.0 no request on `chatgpt.com` is blocked, and the content script only sets `display: none` — it never touches the network. To confirm, turn **Hide sponsored ads** off in the popup, hard-refresh, and reproduce; the limit will still be there. Log in, or start a new chat later.
-
-The auth sheet, the conversation gate and the **Retry** control are on the never-hide list, so a future ChatGPT rename cannot let the filter swallow the UI you need to recover.
-
-## Still seeing an ad?
-
-The ad markup differs by account, locale, and A/B bucket, so capture the real element:
-
-1. Leave the ChatGPT tab open with the ad visible.
-2. Open the extension popup and click **Scan open ChatGPT tab**.
-3. Click **Copy report**, then email it to [davidadblocker@gmail.com](mailto:davidadblocker@gmail.com?subject=AIEnabler%20Feedback) with the subject **AIEnabler Feedback**.
-
-The report contains the candidate elements' tags/attributes/HTML snippets, every ad-ish attribute name found in the page, which `assistant-ads-*` chunks the page loaded, and the build id — enough to add an exact selector.
-
-Before any of that, open DevTools (F12) on the ChatGPT tab and look in the console for:
-
-```text
-[AIEnabler] ad filter running - stylesheet on, hidden so far: 2
-```
-
-That line is printed once per page load. **No line at all** means the content script never ran in that tab — usually a tab that was already open when the extension was loaded or reloaded on `chrome://extensions`. Reload the tab; no selector work can help until the line appears. `stylesheet OFF` means the script is running but its CSS is not applying, which points at the extension being disabled rather than at a missing selector. The same signal is in the diagnostics report as `cssActive`.
-
-To tune it yourself, edit the top of [`content/hide-ads.js`](content/hide-ads.js):
-
-- `CARD_SELECTORS` — exact ad containers, hidden as-is (fast path).
-- `ANCHOR_SELECTORS` — ad labels, controls and click-through links; the ad around them is hidden, not just the anchor.
-- `AD_TOKENS` / `VALUE_ATTRS` — the token vocabulary and which attribute values get tokenized.
-- `DISCLOSURE_LABELS` — exact short label text, add your locale's wording here.
-- `AD_LINK_PATTERN` / `AD_MEDIA_PATTERN` / `AD_PAYLOAD_PATTERN` — the ad server's link parameters, its creative host, and the keys of its embedded analytics JSON.
-- `CHROME_SELECTOR` — page chrome. Adding a tag here that an ad can contain (`header`, `dialog`, `aside`, …) will silently make ads unhideable.
-- `UNIT_TAGS` / `UNIT_ROLES` — the landmarks an ad unit is wrapped in, used to hide the whole card from any anchor inside it.
-
-Mirror new attribute/class selectors in [`content/hide-ads.css`](content/hide-ads.css) so they are hidden before the observer runs. Never add a bare `ad` substring to CSS: `[class*="ad"]` would match ordinary words like `head`. Then click **Reload** on `chrome://extensions` and refresh ChatGPT.
-
-## Known limits
-
-- Ads injected **inside** the streamed answer with no disclosure label are not hidden; matching answer prose would risk deleting real content.
-- Ad modules are no longer blocked at the network level, so an ad the cosmetic and script layers do not recognise can still render for a moment before the sweep catches it.
+**Known limits:** ads with no disclosure *inside* streamed answer text are not
+hidden. An unrecognized ad can flash before the sweep catches it. Other chat
+sites are not scanned for ads.
 
 ## Privacy
 
-No analytics, no remote code, no conversation upload. Export conversion and ZIP
-creation happen in the current tab; generated files are downloaded directly to
-your device. Required host access is limited to ChatGPT. Access to the ad
-creative host is requested only if you switch request blocking on; access to
-OpenAI image-delivery hosts is requested only when you export images. `storage`
-holds the two switches, the hidden counter, the diagnostics report you
-explicitly request, and a short-lived marker while an image-export permission
-prompt is open.
+No analytics, no remote code, no conversation upload. Host access is limited to
+the chat sites listed above plus the two Claude frame domains that diagrams are
+drawn in, and ad-host access is requested only if request blocking is on. `storage` holds the two switches, a hidden-element count, and
+the diagnostics report you ask for.
 
 ## License
 
