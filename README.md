@@ -1,33 +1,20 @@
-# AIEnabler: Block Ads & Export Chats
+# AIEnabler — AI Chat Exporter & Clean UI
 
-Chrome extension (Manifest V3) that hides sponsored cards on ChatGPT and
-exports conversations locally from popular AI chats. It never rewrites the
-model's answer and never uploads the chat.
+Export AI chats (ChatGPT, Claude, Gemini, DeepSeek, etc.) & toggle UI elements
+for a cleaner workspace.
 
-**Export** works on ChatGPT, Gemini, Claude, DeepSeek, Grok, Microsoft Copilot,
-Perplexity, Mistral Le Chat, Kimi, Qwen, and Poe.
+AIEnabler is an open-source productivity tool for modern AI web interfaces. It
+runs entirely in the browser: it never rewrites the model's answer and never
+uploads the chat.
 
-**Ad hiding** is ChatGPT-only. That is where sponsored answer cards appear; the
-same heuristics would hide real UI on the other sites.
+**Source:**
+https://github.com/strongerwill/AIEnabler-BlockAds-and-ExportChats
 
-## Features
+## Key features
 
-### Block ads (ChatGPT)
-
-Sponsored cards next to ChatGPT answers are hidden. Plus/Go upsells, login
-banners, cookie notices, and unlabeled recommendations are left alone.
-
-- **Hide sponsored ads** in the popup is on by default (CSS + content script).
-- **Block ad requests** is experimental and **off**. It only blocks creatives
-  from the ad host; nothing on `chatgpt.com` is blocked, because earlier path
-  rules could stall the conversation on **Unable to connect. Retry**.
-- Answer text, the composer, the sidebar, auth sheets, and the Retry control
-  are never hidden — including an answer that merely mentions ads.
-
-### Export chats
-
-Reload the chat tab after installing or updating. Tools appear on hover under
-an assistant answer, and under a table or a multi-line code block.
+**Chat export.** Copy or print conversation content from ChatGPT, Claude,
+Gemini, DeepSeek, Grok, Microsoft Copilot, Perplexity, Mistral Le Chat, Kimi,
+Qwen, and Poe.
 
 - **Copy Markdown** copies one assistant answer (the whole turn, not a fragment).
 - **Copy table MD** / **Copy CSV** copy a table. CSV also carries a table flavor
@@ -52,6 +39,31 @@ cannot read. A small script runs inside those frames and hands the drawing back
 on request, so it reaches the export too — that is what the
 `claudeusercontent.com` and `claudemcpcontent.com` access is for. A frame that
 stays silent leaves a marked placeholder rather than disappearing.
+
+**Element control & clean UI.** Optional toggle to hide non-essential UI
+elements and ads for a distraction-free experience. Sponsored cards next to
+ChatGPT answers are hidden; Plus/Go upsells, login banners, cookie notices, and
+unlabeled recommendations are left alone. Ad hiding is ChatGPT-only — that is
+where sponsored answer cards appear; the same heuristics would hide real UI on
+the other sites.
+
+- **Hide sponsored ads** in the popup is on by default (CSS + content script).
+- **Block ad requests** is experimental and **off**. It only blocks creatives
+  from the ad host; nothing on `chatgpt.com` is blocked, because earlier path
+  rules could stall the conversation on **Unable to connect. Retry**.
+- Answer text, the composer, the sidebar, auth sheets, and the Retry control
+  are never hidden — including an answer that merely mentions ads.
+
+**Privacy-first.** 100% client-side. No remote servers, no analytics, no
+tracking.
+
+**Open source.** GPLv3. Source code:
+https://github.com/strongerwill/AIEnabler-BlockAds-and-ExportChats
+
+## Using it
+
+Reload the chat tab after installing or updating. Tools appear on hover under
+an assistant answer, and under a table or a multi-line code block.
 
 A fresh install grants every listed site up front, so nothing to click. Two
 things take that access away: setting the extension to run **only when
@@ -116,9 +128,11 @@ sites are not scanned for ads.
 
 No analytics, no remote code, no conversation upload. Host access is limited to
 the chat sites listed above plus the two Claude frame domains that diagrams are
-drawn in, and ad-host access is requested only if request blocking is on. `storage` holds the two switches, a hidden-element count, and
-the diagnostics report you ask for.
+drawn in, and ad-host access is requested only if request blocking is on.
+`storage` holds the two switches, a hidden-element count, and the diagnostics
+report you ask for.
 
 ## License
 
-This project is licensed under the [GNU General Public License v3.0](LICENSE) (GPLv3).
+This project is licensed under the [GNU General Public License v3.0](LICENSE)
+(GPLv3).
