@@ -1,3 +1,14 @@
+/*
+ * AIEnabler - local export and clean-up tools for AI chat sites.
+ * Copyright (C) 2026 David Cheng
+ *
+ * Free software under the GNU General Public License, version 3 or later.
+ * Distributed with NO WARRANTY; see the LICENSE file in this repository or
+ * <https://www.gnu.org/licenses/> for the full terms.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 /**
  * Runs inside the frames that chat sites draw diagrams in. Those frames are a
  * separate origin - deliberately, so the conversation cannot reach into them -

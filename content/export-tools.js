@@ -1,3 +1,14 @@
+/*
+ * AIEnabler - local export and clean-up tools for AI chat sites.
+ * Copyright (C) 2026 David Cheng
+ *
+ * Free software under the GNU General Public License, version 3 or later.
+ * Distributed with NO WARRANTY; see the LICENSE file in this repository or
+ * <https://www.gnu.org/licenses/> for the full terms.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 (() => {
   if (window.top !== window || window.__AIENABLER_EXPORT_TOOLS__) return;
   window.__AIENABLER_EXPORT_TOOLS__ = true;
@@ -866,8 +877,30 @@
   }
 
   function installInlineTools() {
-    for (const group of messageGroups()) {
-      if (group.role === "assistant") installMessageTools(group);
+    const groups = messageGroups();
+    const answers = groups.filter(({ role }) => role === "assistant");
+    // A turn sitting inside another turn is one block of that answer - the
+    // reasoning panel, a tool result - and not a reply of its own. Letting each
+    // one claim a toolbar is what stacks several Copy Markdown / Save PDF pairs
+    // under a single answer.
+    const outermost = answers.filter(
+      ({ turn }) =>
+        !answers.some((other) => other.turn !== turn && other.turn.contains(turn)),
+    );
+    const live = new Set();
+    for (const group of outermost) {
+      installMessageTools(group);
+      const tools = turnToolbars.get(group.turn);
+      if (tools) live.add(tools);
+    }
+    // Streaming and reopening a conversation both rebuild a turn under a fresh
+    // element, which strands the toolbar keyed to the old one. It stays on the
+    // page and stays clickable, so every toolbar no longer claimed by a turn is
+    // taken out here rather than left to pile up.
+    for (const tools of document.querySelectorAll(`[${UI_ATTR}="message"]`)) {
+      if (!live.has(tools)) tools.remove();
+    }
+    for (const group of groups) {
       for (const body of group.bodies) {
         for (const table of body.querySelectorAll("table")) installTableTools(table);
         for (const pre of body.querySelectorAll("pre")) installCodeTools(pre);

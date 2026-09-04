@@ -1,3 +1,14 @@
+/*
+ * AIEnabler - local export and clean-up tools for AI chat sites.
+ * Copyright (C) 2026 David Cheng
+ *
+ * Free software under the GNU General Public License, version 3 or later.
+ * Distributed with NO WARRANTY; see the LICENSE file in this repository or
+ * <https://www.gnu.org/licenses/> for the full terms.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 /**
  * Chat sites the export tools understand. Ad hiding stays ChatGPT-only: the
  * sponsored-card heuristics are built around that page and would hide real UI
